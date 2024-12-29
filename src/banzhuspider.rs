@@ -1,6 +1,6 @@
 use crate::bypass::CloudflareBypass;
 use crate::task::BanzhuDownloadTask;
-use crate::{Error, DEFAULT_USER_AGENT};
+use crate::{create_multi_pbr, create_pbr, Error, DEFAULT_USER_AGENT};
 use aes::cipher;
 use aes::cipher::{ArrayLength, BlockDecrypt, BlockDecryptMut, BlockEncryptMut, KeyInit};
 use base64::Engine;
@@ -17,60 +17,71 @@ use std::future::Future;
 use std::hash::Hash;
 use std::ops::Deref;
 use std::sync::Arc;
-use std::time::{Duration, SystemTime};
-use futures::future::join_all;
-use futures::SinkExt;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tokio::io::AsyncWriteExt;
-use tokio::sync::Mutex;
+use tokio::sync::{Mutex, Semaphore};
+use tokio::time::sleep;
+use log::{error, info};
 
+/// Constants for anti-crawling dictionaries
 const IMAGE_FANPA_FILE: &str = include_str!("../asset/txt/变形字体库v2.txt");
 const FONT_FANPA_FILE: &str = include_str!("../asset/txt/字体反爬库.txt");
 
+/// Spider configuration
+#[derive(Debug)]
+pub struct SpiderConfig {
+    pub max_concurrent_tasks: usize,
+    pub retry_attempts: u32,
+    pub retry_delay: Duration,
+    pub request_timeout: Duration,
+}
 
+impl Default for SpiderConfig {
+    fn default() -> Self {
+        Self {
+            max_concurrent_tasks: 16,
+            retry_attempts: 3,
+            retry_delay: Duration::from_millis(100),
+            request_timeout: Duration::from_secs(5),
+        }
+    }
+}
 
-
-
+/// Main spider implementation for web scraping
 pub struct BanzhuSpider {
     url: String,
     config: Arc<Config>,
+    spider_config: Arc<SpiderConfig>,
     pub client: Arc<Client>,
     pub img_fanpa_dict: Arc<HashMap<String, String>>,
     pub font_fanpa_dict: Arc<HashMap<String, String>>,
 }
 
+/// Initialize image anti-crawling dictionary
 pub fn init_img_fanpa_dict() -> HashMap<String, String> {
     let mut img_fanpa_dict = HashMap::new();
-
-    // 初始化反爬字典
-    for line in IMAGE_FANPA_FILE.split("\n") {
-        let arr = line.split(" ").collect::<Vec<&str>>();
-        if arr.len() == 2 {
-            let word = arr[0].trim().to_string();
-            let url = arr[1].trim().to_string();
-            img_fanpa_dict.insert(url, word);
+    for line in IMAGE_FANPA_FILE.split('\n') {
+        if let Some((word, url)) = line.split_once(' ') {
+            img_fanpa_dict.insert(url.trim().to_string(), word.trim().to_string());
         }
     }
-
-    return img_fanpa_dict;
+    img_fanpa_dict
 }
 
+/// Initialize font anti-crawling dictionary
 pub fn init_font_fanpa_dict() -> HashMap<String, String> {
     let mut dict = HashMap::new();
-
-    // 初始化反爬字典
-    for line in FONT_FANPA_FILE.split("\n") {
-        let arr = line.split("\t").collect::<Vec<&str>>();
-        if arr.len() == 2 {
-            let key = arr[0].trim().to_string();
-            let val = arr[1].trim().to_string();
-            dict.insert(key, val);
+    for line in FONT_FANPA_FILE.split('\n') {
+        if let Some((key, val)) = line.split_once('\t') {
+            dict.insert(key.trim().to_string(), val.trim().to_string());
         }
     }
-    return dict;
+    dict
 }
 
 impl BanzhuSpider {
-    pub fn new() -> BanzhuSpider {
+    /// Create a new spider instance with default configuration
+    pub fn new() -> Self {
         let config = Arc::new(Config::builder()
             .add_source(File::with_name("spider.toml"))
             .build()
@@ -84,137 +95,117 @@ impl BanzhuSpider {
             .cookie_store(true)
             .zstd(true)
             .user_agent(DEFAULT_USER_AGENT)
-            .build().unwrap());
+            .timeout(Duration::from_secs(30))
+            .build()
+            .unwrap());
 
-        let  img_fanpa_dict = Arc::new(init_img_fanpa_dict());
-        let  font_fanpa_dict = Arc::new(init_font_fanpa_dict());
+        let img_fanpa_dict = Arc::new(init_img_fanpa_dict());
+        let font_fanpa_dict = Arc::new(init_font_fanpa_dict());
 
-        // println!("img_fanpa_dict: {:#?}", img_fanpa_dict);
-        // println!("font_fanpa_dict: {:#?}", font_fanpa_dict);
-        BanzhuSpider {
+        Self {
             img_fanpa_dict,
             font_fanpa_dict,
             url,
             config,
             client,
+            spider_config: Arc::new(SpiderConfig::default()),
         }
     }
 
-    
+    /// Configure spider settings
+    pub fn with_config(mut self, config: SpiderConfig) -> Self {
+        self.spider_config = Arc::new(config);
+        self
+    }
 
+    /// Run the spider with concurrent task processing
     pub async fn run(&mut self) -> Result<(), Error> {
-  
+        info!("Starting spider with max concurrent tasks: {}", self.spider_config.max_concurrent_tasks);
         
         let max_num = self.config.get_int("max_num").unwrap_or(1000);
-        let root_url = self
-            .config
-            .get_string("root_url")
-            .expect("Failed to get root url from config");
+        let start = self.config.get_int("start").unwrap_or(1);
+        
+        let cf = Arc::new(Mutex::new(CloudflareBypass::new(self.url.clone())));
 
-        let start = self
-            .config
-            .get_int("start")
-            .unwrap_or(1);
-        
-        let cf = Arc::new(Mutex::new(CloudflareBypass::new(root_url.clone())));
-        
-        // 读取本地记录
-        cf.lock().await.read_ua_cookie().await;
-        
-        // let mut futures = vec![];
+        cf.lock().await.bypass_cloudflare().await?;
+
+        let multi_pbr = create_multi_pbr();
+
+        // Semaphore for controlling concurrent tasks
+        let semaphore = Arc::new(Semaphore::new(self.spider_config.max_concurrent_tasks));
+        let mut handles = vec![];
+
         for book_id in start..max_num {
+            let permit = semaphore.clone().acquire_owned().await.unwrap();
             let cf = cf.clone();
-            let task = BanzhuDownloadTask::new(root_url.clone(),
-                                               book_id, self.config.clone(), 
-                                               self.img_fanpa_dict.clone(), 
-                                               self.font_fanpa_dict.clone(),
-                                               self.client.clone(), cf);
-            let future = async move {
-                match task.download().await {
-                    Ok(_) => {
-                        println!("Download successful:{}", book_id);
-                    }
-                    Err(_) => {
+            let m_clone_pbr = multi_pbr.clone();
+            let spider_config = self.spider_config.clone();
+            
+            let task = BanzhuDownloadTask::new(
+                self.url.clone(),
+                book_id,
+                self.config.clone(),
+                self.img_fanpa_dict.clone(),
+                self.font_fanpa_dict.clone(),
+                self.client.clone(),
+                cf,
+                m_clone_pbr,
+                spider_config
+            );
 
-                    }
-                };
-            };
-            future.await;
-            // futures.push(future);
+            let handle = tokio::task::spawn_blocking(move || {
+                tokio::runtime::Runtime::new()
+                    .unwrap()
+                    .block_on(async {
+                        let result = task.download().await;
+                        match result {
+                            Ok(_) => info!("Successfully downloaded book {}", book_id),
+                            Err(e) => error!("Failed to download book {}: {}", book_id, e),
+                        }
+                        drop(permit);
+                    });
+            });
+
+            handles.push(handle);
+
+            // Optional delay between tasks
+            sleep(Duration::from_millis(100)).await;
         }
-        
-        // join_all(futures).await;
-        // join_num(futures, 16).await;
+
+        // Wait for all tasks to complete
+        for handle in handles {
+            if let Err(e) = handle.await {
+                error!("Task join error: {}", e);
+            }
+        }
+
+        info!("Spider completed successfully");
         Ok(())
     }
 }
 
-pub async fn join_num(futures: Vec<impl Future<Output = ()> + Sized>, step: usize) {
-    
-    let start = 0;
-    let end =  {
-        if futures.len() <= step {
-            futures.len()
-        } else {
-            step
-        }
-    };
-    if start >= end {
-        return;
-    }
-    // let futures_slice = futures[start..end].to_vec();
-    
-    // join_all(futures_slice).await;
-    
-}
-
-
 pub fn time() -> u128 {
     SystemTime::now()
-        .duration_since(SystemTime::UNIX_EPOCH)
+        .duration_since(UNIX_EPOCH)
         .unwrap()
         .as_millis()
 }
 
 #[cfg(test)]
 mod tests {
-    use pbr::ProgressBar;
-    use std::thread;
-    use std::time::Duration;
+    use super::*;
 
-
-    #[test]
-    fn test_pbr() {
-        let count = 1000;
-        let mut pb = ProgressBar::new(count);
-        pb.format("╢▌▌░╟");
-        for _ in 0..count {
-            pb.inc();
-            thread::sleep_ms(200);
-        }
-        pb.finish_print("done");
-    }
-
-    #[test]
-    fn test_unicode() {
-        let string1 = '\u{a0}';
-        let mut escaped_string = String::new();
-        let hex_str = format!("{:x}", string1 as u32);
-        let escaped_char = format!("\\u{}", hex_str);
-        println!("字符串 '{}' 的\\u格式Unicode转义序列为: {}", string1, escaped_char);
-    }
-
-    #[test]
-    fn test_rq() {
-        tokio::runtime::Runtime::new().unwrap().block_on(async {
-            let client = reqwest::Client::new();
-            let response = client
-                .get("https://www.44yydstxt234.com/1/1/")
-                .timeout(Duration::from_secs(5))
-                .send()
-                .await
-                .unwrap();
-            assert!(response.status().is_success());
-        });
+    #[tokio::test]
+    async fn test_spider_config() {
+        let spider = BanzhuSpider::new()
+            .with_config(SpiderConfig {
+                max_concurrent_tasks: 8,
+                retry_attempts: 5,
+                retry_delay: Duration::from_secs(10),
+                request_timeout: Duration::from_secs(60),
+            });
+        
+        assert_eq!(spider.spider_config.max_concurrent_tasks, 8);
+        assert_eq!(spider.spider_config.retry_attempts, 5);
     }
 }

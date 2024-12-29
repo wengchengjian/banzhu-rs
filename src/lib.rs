@@ -14,6 +14,8 @@ use pyo3::prelude::{PyAnyMethods, PyModule};
 use pyo3::Python;
 use rand::rngs::OsRng;
 use rand_core::{RngCore, TryRngCore};
+use anyhow::Result;
+use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
 
 type Aes128CbcEnc = cbc::Encryptor<aes::Aes128>;
 type Aes128CbcDec = cbc::Decryptor<aes::Aes128>;
@@ -26,7 +28,7 @@ const DEFAULT_USER_AGENT: &'static str = "Mozilla/5.0 (Linux; Android 6.0; Nexus
 
 const KEY: &[u8; 16] = b"abcdedghijklmnop"; // 模拟密钥，请勿在实际程序中使用
 
-pub fn get_section_data_by_py(html: &str, ns: &str) -> Result<String, SpiderError> {
+pub fn get_section_data_by_py(html: &str, ns: &str) -> Result<String> {
     Python::with_gil(|py| {
         let code = c_str!(include_str!("jdom.py"));
 
@@ -85,6 +87,28 @@ pub fn encrypt(plain: &[u8]) -> (Vec<u8>, [u8; 16]) {
         .unwrap();
 
     (ct.to_vec(), iv)
+}
+
+pub fn get_default_pbr_style() -> ProgressStyle {
+    let style = ProgressStyle::default_bar()
+        .template("{spinner:.green} [{elapsed_precise}] [{wide_bar:.cyan/blue}] {pos}/{len}, {eta})")
+        .unwrap()
+        .progress_chars("#>-");
+    
+    style
+}
+
+pub fn create_multi_pbr() -> MultiProgress {
+    let m = MultiProgress::new();
+    m
+}
+
+pub fn create_pbr(count: u64) -> ProgressBar {
+    let pbr = ProgressBar::new(count);
+    
+    pbr.set_style(get_default_pbr_style());
+    
+    pbr
 }
 
 /// 生成随机 iv

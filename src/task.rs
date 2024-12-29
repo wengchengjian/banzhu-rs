@@ -1,12 +1,11 @@
 use crate::bypass::{is_bypassed, CloudflareBypass};
 use crate::error::SpiderError;
-use crate::error::SpiderError::{DecodingError, HtmlParseError, NotFoundChapters, OtherError, RequestError, UnknownError};
-use crate::{decrpyt_aes_128_cbc, get_section_data_by_py, POST_TEXT};
+use crate::error::SpiderError::{DecodingError, HtmlParseError, NotFoundChapters,RequestError};
+use crate::{create_pbr, decrpyt_aes_128_cbc, get_section_data_by_py, POST_TEXT};
 use config::Config;
 use encoding::all::GBK;
 use encoding::{DecoderTrap, Encoding};
 use lazy_static::lazy_static;
-use pbr::ProgressBar;
 use regex::Regex;
 use reqwest::{Client, Response};
 use scraper::selectable::Selectable;
@@ -20,12 +19,14 @@ use std::ops::Deref;
 use std::string::FromUtf8Error;
 use std::sync::Arc;
 use std::time::Duration;
-use futures::future::join_all;
-use futures::{FutureExt, TryStreamExt};
 use tokio::fs::{create_dir_all, OpenOptions};
 use tokio::io::AsyncWriteExt;
 use tokio::sync::Mutex;
 use tokio::time::sleep;
+use anyhow::{anyhow, Result};
+use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
+use log::{debug, info, warn};
+use crate::banzhuspider::SpiderConfig;
 
 lazy_static! {
     static ref PAGE_REGEX: Regex =
@@ -104,11 +105,13 @@ impl Chapter {
 pub struct BanzhuDownloadTask {
     pub book_id: i64,
     pub root_url: String,
+    pub spider_config: Arc<SpiderConfig>,
     pub config: Arc<Config>,
     pub img_fanpa_dict: Arc<HashMap<String, String>>,
     pub font_fanpa_dict: Arc<HashMap<String, String>>,
     pub client: Arc<Client>,
-    pub cf: Arc<Mutex<CloudflareBypass>>
+    pub cf: Arc<Mutex<CloudflareBypass>>,
+    pub multi_pbr: MultiProgress,
 }
 
 
@@ -116,8 +119,8 @@ impl BanzhuDownloadTask {
     pub fn new(root_url: String, book_id: i64, config: Arc<Config>,
                img_fanpa_dict: Arc<HashMap<String, String>>,
                font_fanpa_dict: Arc<HashMap<String, String>>,
-               client: Arc<Client>, cf: Arc<Mutex<CloudflareBypass>>) -> Self {
-        BanzhuDownloadTask {root_url, book_id, config, img_fanpa_dict, font_fanpa_dict, client, cf}
+               client: Arc<Client>, cf: Arc<Mutex<CloudflareBypass>>, multi_pbr: MultiProgress, spider_config: Arc<SpiderConfig>) -> Self {
+        BanzhuDownloadTask {root_url, book_id, config, img_fanpa_dict, font_fanpa_dict, client, cf, multi_pbr, spider_config }
     }
 
 
@@ -130,15 +133,15 @@ impl BanzhuDownloadTask {
 
     pub async fn get_client_request(&self, url: &str) -> Result<Response, reqwest::Error> {
         let headers = self.cf.lock().await.get_headers().await;
-        Ok(self.client.get(url).headers(headers).send().await?)
+        Ok(self.client.get(url).timeout(self.spider_config.request_timeout).headers(headers).send().await?)
     }
 
-    async fn post_text(&self, url: &str, text: &Value) -> Result<String, SpiderError> {
+    async fn post_text(&self, url: &str, text: &Value) -> Result<String> {
         let retry = 5;
         for i in 0..retry {
             if i != 0 {
                 sleep(Duration::from_millis(100)).await;
-                println!("第{}次重连: {}", i, url);
+                debug!("第{}次重连: {}", i, url);
             }
             let response = self.post_client_request(url, text).await?;
             if response.status().is_success() {
@@ -146,26 +149,26 @@ impl BanzhuDownloadTask {
                 return Ok(text);
             }
         }
-        Err(UnknownError)
+        Err(anyhow!("未知异常"))
     }
 
-    async fn bypass_cloudflare(&self) -> Result<(), SpiderError>{
+    async fn bypass_cloudflare(&self) -> Result<()>{
         Ok(self.cf.lock().await.bypass_cloudflare().await?)
     }
 
-    pub async fn get(&self, url: &str) -> Result<String, SpiderError> {
-        let retry = 5;
+    pub async fn get(&self, url: &str) -> Result<String> {
+        let retry = self.spider_config.retry_attempts;
         for i in 0..retry {
             if i != 0 {
-                sleep(Duration::from_millis(100)).await;
-                println!("第{}次重连: {}", i, url);
+                sleep(self.spider_config.retry_delay).await;
+                debug!("第{}次重连: {}", i, url);
             }
             // 模拟随机请求行为
             // time::sleep(Duration::from_millis(rng.gen_range(89..1128))).await;
             match self.get_client_request(url).await {
                 Ok(response) => {
                     if response.status().is_success() {
-                        let text = response.text().await.unwrap();
+                        let text = response.text().await?;
                         if text.len() > 0 {
                             if !is_bypassed(&text) {
                                 self.bypass_cloudflare().await?;
@@ -176,7 +179,7 @@ impl BanzhuDownloadTask {
                                 });
                                 let resp = self.post_text(url, &data).await?;
                                 if resp == "success" {
-                                    println!("post 1234 success")
+                                    info!("post 1234 success")
                                 }
                             } else {
                                 return Ok(text);
@@ -184,7 +187,7 @@ impl BanzhuDownloadTask {
                         }
                     } else {
                         if response.status().as_u16() == 403 {
-                            println!("url: {}, status: 403", url);
+                            warn!("url: {}, status: 403", url);
                         }
                     }
                 }
@@ -192,25 +195,25 @@ impl BanzhuDownloadTask {
                     if e.is_timeout() || e.is_connect() {
                         self.bypass_cloudflare().await?;
                     } else if e.is_status() {
-                        println!("status: {:?}", e.status().unwrap());
+                        debug!("status: {:?}", e.status().unwrap());
                     }
                 }
             };
         }
 
-        Err(UnknownError)
+        Err(anyhow!("未知异常"))
     }
 
-    pub async fn download(&self) -> Result<(), SpiderError> {
+    pub async fn download(&self) -> Result<()> {
         let url = format!("{}/{}/{}/", self.root_url, self.book_id % 1000, self.book_id);
-        println!("crawl book {}: {url}",self.book_id);
+        info!("crawl book {}: {url}",self.book_id);
 
         if let Some(captures) = URL_REGEX.captures(&url) {
             if !URL_REGEX.is_match(&url) {
-                println!("Invalid URL: {}", &url);
+                warn!("Invalid URL: {}", &url);
             }
-            let book_id: usize = captures["id"].parse().unwrap();
-            let book_num: usize = captures["num"].parse().unwrap();
+            let book_id: usize = captures["id"].parse()?;
+            let book_num: usize = captures["num"].parse()?;
 
             match self.get(&url).await {
                 Ok(text) => {
@@ -234,7 +237,7 @@ impl BanzhuDownloadTask {
                     }
                 }
                 Err(_) => {
-                    println!("{url} 请求失败");
+                    debug!("{url} 请求失败");
                     // 尝试重新获取cookie
                     self.bypass_cloudflare().await?;
                 }
@@ -244,14 +247,13 @@ impl BanzhuDownloadTask {
         Ok(())
     }
 
-    pub async fn get_info(&self, html: &Html) -> Result<Book, SpiderError> {
+    pub async fn get_info(&self, html: &Html) -> Result<Book> {
         let page_sec = Selector::parse(".pagelistbox .page").unwrap();
-        let page = html.select(&page_sec).next().ok_or(HtmlParseError)?;
+        let page = html.select(&page_sec).next().ok_or(anyhow!("html解析异常"))?;
         let page_text = page.inner_html();
         let page: u8 = PAGE_REGEX.captures(&page_text).unwrap()["page"]
             .to_string()
-            .parse()
-            .unwrap();
+            .parse()?;
         
         let book_sec = Selector::parse("h1").unwrap();
         let book_name = html.select(&book_sec)
@@ -302,7 +304,7 @@ impl BanzhuDownloadTask {
     pub async fn get_chapters_content(
         &self,
         book: &Book,
-    ) -> Result<Vec<Chapter>, SpiderError> {
+    ) -> Result<Vec<Chapter>> {
         let mut page_urls = vec![];
         for page in 1..book.page + 1 {
             let page_url = format!(
@@ -317,7 +319,7 @@ impl BanzhuDownloadTask {
         let mut chapters = self.get_chapters_url(page_urls).await?;
         
         if chapters.len() == 0 {
-            return Err(NotFoundChapters);
+            return Err(anyhow!("未发现chapter"));
         }
         self.get_sections_url(&mut chapters).await?;
 
@@ -326,57 +328,57 @@ impl BanzhuDownloadTask {
         Ok(chapters)
     }
 
-    pub async fn get_sections_data(
-        &self,
-        chapters: &mut Vec<Chapter>,
-    ) -> Result<(), SpiderError> {
-        println!("正在获取Section Data...");
-        let mut pbr = Arc::new(Mutex::new(create_pbr(get_chapter_section_num(chapters))));
-        
-        let mut futures = vec![];
+    pub async fn get_sections_data_pbr(&self,
+                                       chapters: &mut Vec<Chapter>, pbr: &ProgressBar) -> Result<()> {
         // 异步获取html
         for chapter in &mut *chapters {
             if let Some(sections) = &mut chapter.sections {
                 for section in sections {
                     let section_url = section.url.clone();
-                    let pbr = pbr.clone();
-                    let future = async move {
-                        let html_str = self.get(&section_url).await.unwrap();
-                        let content = self.get_section_data1(&html_str).unwrap();
+                    let html_str = self.get(&section_url).await?;
+                    let content = self.get_section_data1(&html_str)?;
 
-                        let html = Html::parse_document(&html_str);
+                    let html = Html::parse_document(&html_str);
 
-                        let content = content + self.get_section_data2(&section_url, &html).await.unwrap_or(String::new()).as_str();
+                    let content = content + self.get_section_data2(&section_url, &html).await.unwrap_or(String::new()).as_str();
 
-                        let content = content + self.get_section_data3(&html).unwrap_or(String::new()).as_str();
+                    let content = content + self.get_section_data3(&html).unwrap_or(String::new()).as_str();
 
-                        let content = content + self.get_section_data4(&html).unwrap_or(String::new()).as_str();
+                    let content = content + self.get_section_data4(&html).unwrap_or(String::new()).as_str();
 
-                        if content.len() > 0 {
-                            // 去除特殊字符
-                            let content = content.replace(' ', " ");
-                            // let content = content.replace("\n", "\n\n");
-                            // 添加首行缩进
-                            let content = "\t".to_owned() + content.as_str();
-                            section.content = Some(content);
-                        }
-                        // 进度 加 1
-                        pbr.lock().await.inc();
-                    };
-                    futures.push(future);
+                    if content.len() > 0 {
+                        // 去除特殊字符
+                        let content = content.replace(' ', " ");
+                        // let content = content.replace("\n", "\n\n");
+                        // 添加首行缩进
+                        let content = "\t".to_owned() + content.as_str();
+                        section.content = Some(content);
+                    }
+                    // 进度 加 1
+                    pbr.inc(1);
                 }
             }
         }
-        join_all(futures).await;
         
         Ok(())
+    }
+    pub async fn get_sections_data(
+        &self,
+        chapters: &mut Vec<Chapter>,
+    ) -> Result<()> {
+        debug!("正在获取Section Data...");
+        let mut pbr = self.multi_pbr.add(create_pbr(get_chapter_section_num(chapters)));
+        let ret =  self.get_sections_data_pbr(chapters, &mut pbr).await;
+        // 移除进度条
+        self.multi_pbr.remove(&pbr);
+        ret
     }
     /// 接口返回的整个html
     async fn get_section_data2(
         &self,
         url: &str,
         html: &Html,
-    ) -> Result<String, SpiderError> {
+    ) -> Result<String> {
         let html_str = html.html();
         let mut content = String::new();
         if SECTION_DATA_REGEX2.is_match(&html_str) {
@@ -392,7 +394,7 @@ impl BanzhuDownloadTask {
     }
 
     /// 返回的内容
-    fn get_section_data3(&self, html: &Html) -> Result<String, SpiderError> {
+    fn get_section_data3(&self, html: &Html) -> Result<String> {
         let mut content = String::new();
         let html_str = html.html();
         if let Some(cap) = SECTION_DATA_REGEX3.captures(&html_str) {
@@ -411,7 +413,7 @@ impl BanzhuDownloadTask {
     }
 
     /// 返回内容
-    fn get_section_data4(&self, html: &Html) -> Result<String, SpiderError> {
+    fn get_section_data4(&self, html: &Html) -> Result<String> {
         let html_str = html.html();
         if let Some(cap) = SECTION_DATA_REGEX4.captures(&html_str) {
             let cipher_text = &cap["cipher"];
@@ -433,16 +435,16 @@ impl BanzhuDownloadTask {
         }
         Ok("".to_string())
     }
-    fn get_section_data1(&self, html: &str) -> Result<String, SpiderError> {
+    fn get_section_data1(&self, html: &str) -> Result<String> {
         Ok(self.format_content(html.to_string())?)
     }
 
-    fn format_content(&self, html_str: String) -> Result<String, SpiderError> {
+    fn format_content(&self, html_str: String) -> Result<String> {
         let html = Html::parse_document(&html_str);
         let nodes = html
-            .select(&Selector::parse(".neirong div").unwrap())
+            .select(&Selector::parse(".neirong div").map_err(|e| anyhow!("html解析失败"))?)
             .next()
-            .unwrap()
+            .ok_or(anyhow!("没有neirong节点"))?
             .descendants();
         
 
@@ -493,68 +495,56 @@ impl BanzhuDownloadTask {
     pub async fn get_sections_url(
         &self,
         chapters: &mut Vec<Chapter>,
-    ) -> Result<(), SpiderError> {
-        println!("正在获取Section URL...");
-
-        let mut pbr = Arc::new(Mutex::new(create_pbr(chapters.len() as u64)));
-        let mut futures = vec![];
+    ) -> Result<()> {
+        debug!("正在获取Section URL...");
         for chapter in chapters {
             let mut sections = vec![];
-            let pbr = pbr.clone();
-            
-            let future = async move {
-                let html_str = self.get(&chapter.url).await.unwrap();
-                let html = Html::parse_document(&html_str);
-                let selector = Selector::parse(".chapterPages a").unwrap();
-                let section_list = html.select(&selector);
+            let html_str = self.get(&chapter.url).await.unwrap();
+            let html = Html::parse_document(&html_str);
+            let selector = Selector::parse(".chapterPages a").unwrap();
+            let section_list = html.select(&selector);
 
-                let mut section_num = 1;
-                let mut sec_num_list = vec![];
-                for section_l in section_list {
-                    section_num += 1;
-                    let num: u8 = SECTION_NUM_REGEX
-                        .captures(section_l.text().next().unwrap())
-                        .unwrap()["num"]
-                        .to_string()
-                        .parse()
-                        .unwrap();
-                    sec_num_list.push(num);
-                }
-                let mut max_sec_num = section_num;
-                if sec_num_list.len() != 0 {
-                    max_sec_num = *sec_num_list.iter().max().unwrap();
-                }
+            let mut section_num = 1;
+            let mut sec_num_list = vec![];
+            for section_l in section_list {
+                section_num += 1;
+                let num: u8 = SECTION_NUM_REGEX
+                    .captures(section_l.text().next().unwrap())
+                    .unwrap()["num"]
+                    .to_string()
+                    .parse()
+                    .unwrap();
+                sec_num_list.push(num);
+            }
+            let mut max_sec_num = section_num;
+            if sec_num_list.len() != 0 {
+                max_sec_num = *sec_num_list.iter().max().unwrap();
+            }
 
-                let group = SECTION_PAGE_REGEX.captures(chapter.url.as_str()).unwrap();
+            let group = SECTION_PAGE_REGEX.captures(chapter.url.as_str()).unwrap();
 
-                let left = group["left"].to_string();
-                let right = group["right"].to_string();
+            let left = group["left"].to_string();
+            let right = group["right"].to_string();
 
-                for i in 1..max_sec_num + 1 {
-                    sections.push(Section::new(format!("{}/{}_{}.html", left, right, i)));
-                }
-                // 去重
-                sections = arr_dup_rem_linked(sections);
+            for i in 1..max_sec_num + 1 {
+                sections.push(Section::new(format!("{}/{}_{}.html", left, right, i)));
+            }
+            // 去重
+            sections = arr_dup_rem_linked(sections);
 
-                chapter.sections = Some(sections);
-                pbr.lock().await.inc();
-            };
-            futures.push(future);
+            chapter.sections = Some(sections);
         }
-        
-        join_all(futures).await;
-        
+
         Ok(())
     }
 
     pub async fn get_chapters_url(
         &self,
         page_urls: Vec<String>,
-    ) -> Result<Vec<Chapter>, SpiderError> {
-        println!("正在获取Chapter URL...");
+    ) -> Result<Vec<Chapter>> {
+        debug!("正在获取Chapter URL...");
 
         let mut chapters = vec![];
-        let mut pbr = create_pbr(page_urls.len() as u64);
         for page_url in page_urls {
             let html = Html::parse_document(&self.get(&page_url).await?);
             let selector = Selector::parse(".chapter-list .bd ul li a").unwrap();
@@ -568,7 +558,6 @@ impl BanzhuDownloadTask {
                     }
                 }
             }
-            pbr.inc();
         }
         // 去重
         chapters = arr_dup_rem_linked(chapters);
@@ -595,7 +584,7 @@ async fn save_book_local_txt(
     book: &Book,
     chapters: &Vec<Chapter>,
     dir: &str,
-) -> Result<(), SpiderError> {
+) -> Result<()> {
     let dir = format!("{}/{}", dir, book.category);
     // 先创建目录
     create_dir_all(&dir).await?;
@@ -629,12 +618,6 @@ fn split_second(s: &str, pattern: &str) -> String {
     s.split(pattern).collect::<Vec<&str>>()[1]
         .trim()
         .to_string()
-}
-
-pub fn create_pbr(count: u64) -> ProgressBar<Stdout> {
-    let mut pb = ProgressBar::new(count);
-    pb.format("╢▌▌░╟");
-    return pb;
 }
 
 pub fn arr_dup_rem_linked<T: Eq + Clone + Hash>(arr: Vec<T>) -> Vec<T> {

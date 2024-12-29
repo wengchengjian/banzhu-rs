@@ -1,5 +1,4 @@
 use crate::banzhuspider::time;
-use crate::error::SpiderError;
 use crate::DEFAULT_USER_AGENT;
 use futures::lock::Mutex;
 use lazy_static::lazy_static;
@@ -23,6 +22,7 @@ use std::path::Path;
 use std::sync::Arc;
 use std::time::Duration;
 use std::{fs, thread};
+use log::{info, warn};
 use tokio::fs::OpenOptions;
 use tokio::io::AsyncWriteExt;
 
@@ -125,17 +125,17 @@ impl CloudflareBypass {
         }
     }
 
-    pub async fn bypass_cloudflare(&mut self) -> Result<(), SpiderError> {
+    pub async fn bypass_cloudflare(&mut self) -> anyhow::Result<()> {
 
         let now = time();
 
         if now - self.last_bypassed > 60 * 1000 {
-            println!("\n***************** bypass cloudflare *****************");
+            info!("\n***************** bypass cloudflare *****************");
             
 
             let (ua, cookie) = self.bypass().await?;
-            println!("User-Agent:{ua}");
-            println!("Cookie:{cookie}");
+            info!("User-Agent:{ua}");
+            info!("Cookie:{cookie}");
             let mut headers = self.headers.lock().await;
             
             if cookie.len() != 0 {
@@ -149,17 +149,17 @@ impl CloudflareBypass {
                 // 记录cookie到本地
                 record_ua_cookie(&*headers).await;
             }
-            println!("***************** bypass cloudflare *****************\n");
+            info!("***************** bypass cloudflare *****************\n");
 
             self.last_bypassed = time();
         } else {
-            println!("the distance from the last bypass cloudflare is no more than 60 seconds, ignore this bypass");
+            warn!("the distance from the last bypass cloudflare is no more than 60 seconds, ignore this bypass");
         }
 
         Ok(())
     }
     
-    pub async fn bypass(&self) -> Result<(String, String), SpiderError> {
+    pub async fn bypass(&self) -> anyhow::Result<(String, String)> {
         let url = self.url.clone();
         let mut rng = rand::thread_rng();
         Python::with_gil(|py| {
@@ -179,7 +179,7 @@ impl CloudflareBypass {
                 //截屏
                 let data: Vec<u8> = bypass.getattr("screenshot")?.call0()?.extract()?;
 
-                fs::write("screenshot.png", &data)?;
+                // fs::write("screenshot.png", &data)?;
                 let screenshot = Mat::from_bytes::<u8>(&data).unwrap();
                 let screenshot = imdecode(&screenshot, IMREAD_COLOR).unwrap();
                 for target in self.img_dict.values() {
@@ -211,7 +211,7 @@ impl CloudflareBypass {
     }
 
     pub fn click_button(&self, x: i32, y: i32){
-        println!("Click cloudflare button for {}-{}", x, y);
+        info!("Click cloudflare button for {}-{}", x, y);
         let mouse = Mouse::new();
         mouse.move_to(x, y).expect("Unable to move mouse");
         mouse.click(&Keys::LEFT).expect("Unable to click button");
