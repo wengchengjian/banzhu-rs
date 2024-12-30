@@ -4,9 +4,14 @@ use crate::{create_multi_pbr, create_pbr, Error, DEFAULT_USER_AGENT};
 use aes::cipher;
 use aes::cipher::{ArrayLength, BlockDecrypt, BlockDecryptMut, BlockEncryptMut, KeyInit};
 use base64::Engine;
+use cipher::typenum::private::Trim;
 use cipher::KeyIvInit;
 use config::{Config, File};
 use encoding::Encoding;
+use futures::{stream, StreamExt};
+use itertools::Itertools;
+use lazy_static::lazy_static;
+use log::{error, info};
 use pyo3::unindent::Unindent;
 use rand::Rng;
 use reqwest::Client;
@@ -16,19 +21,15 @@ use std::fmt::Display;
 use std::fs::OpenOptions;
 use std::future::Future;
 use std::hash::Hash;
-use std::io::{BufRead, BufReader, Write};
+use std::io::{BufRead, BufReader, Read, Write};
 use std::ops::Deref;
-use std::{fs, process};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, RwLockReadGuard};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
-use cipher::typenum::private::Trim;
-use itertools::Itertools;
+use std::{fs, process};
 use tokio::io::AsyncWriteExt;
 use tokio::sync::{broadcast, mpsc, Mutex, RwLock, Semaphore};
 use tokio::time::sleep;
-use log::{debug, error, info};
-use lazy_static::lazy_static;
 
 /// Constants for anti-crawling dictionaries
 const IMAGE_FANPA_FILE: &str = include_str!("../asset/txt/变形字体库v2.txt");
@@ -36,6 +37,7 @@ const FONT_FANPA_FILE: &str = include_str!("../asset/txt/字体反爬库.txt");
 
 lazy_static! {
     static ref DOWNLOAD_BOOK_IDS: Arc<RwLock<HashSet<u32>>> = Arc::new(RwLock::new(HashSet::new()));
+    static ref EXCLUDE_BOOK_IDS: Arc<RwLock<HashSet<u32>>> = Arc::new(RwLock::new(HashSet::new()));
 }
 /// Spider configuration
 #[derive(Debug)]
@@ -65,7 +67,7 @@ pub struct BanzhuSpider {
     pub client: Arc<Client>,
     pub img_fanpa_dict: Arc<HashMap<String, String>>,
     pub font_fanpa_dict: Arc<HashMap<String, String>>,
-    pub cf: Arc<Mutex<CloudflareBypass>>,
+    pub cf: Arc<RwLock<CloudflareBypass>>,
 }
 
 /// Initialize image anti-crawling dictionary
@@ -95,10 +97,20 @@ pub async fn find_max_id() -> Option<u32> {
 
     guard.iter().max().cloned()
 }
+pub async fn init_exclude_ids() {
+    init_ids(&EXCLUDE_BOOK_IDS, "exclude_ids.txt").await;
+}
 
-pub async fn init_download_book_ids() {
-    let mut guard = DOWNLOAD_BOOK_IDS.write().await;
-    let content = fs::read_to_string("download_ids.txt").unwrap();
+pub async fn init_ids(ids: &Arc<RwLock<HashSet<u32>>>, filename: &str) {
+    let mut guard = ids.write().await;
+    let mut file = OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .open(filename)
+        .unwrap();
+    let mut content = String::new();
+    file.read_to_string(&mut content).unwrap();
     for line in content.lines() {
         let line = line.trim();
         if !line.is_empty() {
@@ -107,13 +119,17 @@ pub async fn init_download_book_ids() {
     }
 }
 
-pub async fn save_download_ids() {
-    let guard = DOWNLOAD_BOOK_IDS.read().await;
+pub async fn init_download_book_ids() {
+    init_ids(&DOWNLOAD_BOOK_IDS, "download_ids.txt").await;
+}
+
+pub async fn save_ids(ids: &Arc<RwLock<HashSet<u32>>>, filename: &str) {
+    let guard = ids.read().await;
     let mut file = OpenOptions::new()
         .truncate(true)
         .write(true)
         .create(true)
-        .open("download_ids.txt")
+        .open(filename)
         .unwrap();
     let result: Vec<_> = guard.iter().into_iter().sorted().collect();
     let mut content = String::new();
@@ -121,6 +137,17 @@ pub async fn save_download_ids() {
         content.push_str(&format!("{}\n", i));
     }
     file.write_all(format!("{}\n", content).as_bytes()).unwrap();
+}
+pub async fn save_exclude_ids() {
+    save_ids(&EXCLUDE_BOOK_IDS, "exclude_ids.txt").await;
+}
+pub async fn save_download_ids() {
+    save_ids(&DOWNLOAD_BOOK_IDS, "download_ids.txt").await;
+}
+
+pub async fn add_exclude_book_id(book_id: u32) {
+    let mut guard = EXCLUDE_BOOK_IDS.write().await;
+    guard.insert(book_id);
 }
 
 pub async fn add_download_book_id(book_id: u32) {
@@ -134,6 +161,7 @@ impl BanzhuSpider {
         let client = Client::builder()
             .timeout(Duration::from_secs(30))
             .user_agent(DEFAULT_USER_AGENT)
+            .zstd(true)
             .build()
             .unwrap();
 
@@ -147,7 +175,7 @@ impl BanzhuSpider {
             img_fanpa_dict: Arc::new(img_fanpa_dict),
             font_fanpa_dict: Arc::new(font_fanpa_dict),
             spider_config: Arc::new(SpiderConfig::default()),
-            cf: Arc::new(Mutex::new(CloudflareBypass::new(url))),
+            cf: Arc::new(RwLock::new(CloudflareBypass::new(url))),
         }
     }
 
@@ -157,18 +185,58 @@ impl BanzhuSpider {
         self
     }
 
-    /// Run the spider with concurrent task processing
-    pub async fn run(&mut self) -> Result<(), Error> {
-        debug!("Starting spider with max concurrent tasks: {}", self.spider_config.max_concurrent_tasks);
+    pub async fn compute_ids(&self) -> Vec<u32> {
         // 初始化download_ids
         init_download_book_ids().await;
+        init_exclude_ids().await;
 
-        let max_num: u32 = self.config.get_int("max_num").unwrap_or(1000) as u32;   
+        let exclude_ids = {
+            EXCLUDE_BOOK_IDS.read().await.clone()
+        };
+
+        let max_num: u32 = self.config.get_int("max_num").unwrap_or(1000) as u32;
         let default_start: u32 = self.config.get_int("start").unwrap_or(1) as u32;
-        let start = find_max_id().await.unwrap_or(default_start);
+        let guard = DOWNLOAD_BOOK_IDS.read().await;
+        let mut ids =  guard.iter().cloned().sorted().collect_vec();
+        // 添加初始化id
+        if !ids.contains(&default_start) {
+            ids.push(default_start - 1);
+        }
+        if !ids.contains(&max_num) {
+            ids.push(max_num + 1);
+        }
+        // 寻找下载缺失的id数组
+        let mut result: Vec<u32> = vec![];
+        let len = ids.len();
+
+        for i in 0..(len-1) {
+
+            let diff = ids[i+1] - ids[i];
+            if diff > 1 {
+                let start = ids[i] +  1;
+                let end = ids[i+1] - 1;
+                for id in start..=end {
+                    if !exclude_ids.contains(&id) {
+                        result.push(id);
+                    }
+                }
+            }
+        }
+        
+        result
+    }
+
+    /// Run the spider with concurrent task processing
+    pub async fn run(&mut self) -> Result<(), Error> {
+        info!("Starting spider with max concurrent tasks: {}", self.spider_config.max_concurrent_tasks);
+
+        let need_ids = self.compute_ids().await;
+
         let cf = self.cf.clone();
 
-        cf.lock().await.bypass_cloudflare().await?;
+        {
+            cf.write().await.bypass_cloudflare().await?;
+        }
 
         let multi_pbr = create_multi_pbr();
 
@@ -189,14 +257,10 @@ impl BanzhuSpider {
             running_clone.store(false, Ordering::SeqCst);
         }).expect("Error setting Ctrl+C handler");
 
-        for book_id in start..max_num {
+        for book_id in need_ids {
             if !running.load(Ordering::SeqCst) {
                 drop(tx);
                 break;
-            }
-
-            if DOWNLOAD_BOOK_IDS.read().await.contains(&book_id) {
-                continue;
             }
             
             let mut rx_clone = tx.subscribe();
@@ -225,8 +289,8 @@ impl BanzhuSpider {
                             _ = rx_clone.recv() => {}
                             result = task.download() => {
                                 match result {
-                                    Ok(_) => debug!("Successfully downloaded book {}", book_id),
-                                    Err(e) => debug!("Failed to download book {}: {}", book_id, e),
+                                    Ok(_) => error!("Successfully downloaded book {}", book_id),
+                                    Err(e) => error!("Failed to download book {}: {}", book_id, e),
                                 }
                             }
                         }
@@ -234,9 +298,6 @@ impl BanzhuSpider {
                     });
             });
             handles.push(handle);
-
-            // Optional delay between tasks
-            sleep(Duration::from_millis(100)).await;
         }
         
         // Wait for all tasks to complete
@@ -247,11 +308,13 @@ impl BanzhuSpider {
         }
 
         save_download_ids().await;
-
-        debug!("Spider completed successfully");
+        save_exclude_ids().await;
+        info!("Spider completed successfully");
         Ok(())
     }
 }
+
+
 
 pub fn time() -> u128 {
     SystemTime::now()

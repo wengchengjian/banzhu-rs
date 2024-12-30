@@ -2,6 +2,7 @@ use crate::banzhuspider::time;
 use crate::DEFAULT_USER_AGENT;
 use futures::lock::Mutex;
 use lazy_static::lazy_static;
+use log::{info, warn};
 use mouse_rs::types::keys::Keys;
 use mouse_rs::Mouse;
 use opencv::core::{min_max_loc, Point};
@@ -14,7 +15,7 @@ use pyo3::types::PyModule;
 use pyo3::Python;
 use rand::Rng;
 use regex::Regex;
-use reqwest::header::{HeaderMap, HeaderValue, COOKIE, USER_AGENT};
+use reqwest::header::{HeaderMap, HeaderName, HeaderValue, ACCEPT_ENCODING, COOKIE, USER_AGENT};
 use serde_json::Value;
 use std::collections::HashMap;
 use std::ops::DerefMut;
@@ -22,7 +23,6 @@ use std::path::Path;
 use std::sync::Arc;
 use std::time::Duration;
 use std::{fs, thread};
-use log::{debug, info, warn};
 use tokio::fs::OpenOptions;
 use tokio::io::AsyncWriteExt;
 
@@ -64,7 +64,7 @@ pub struct CloudflareBypass {
     pub is_click: bool,
     pub img_dict: HashMap<String, Mat>,
     pub last_bypassed: u128,
-    pub headers: Arc<Mutex<HashMap<&'static str, String>>>,
+    pub headers: HashMap<&'static str, String>,
 }
 
 
@@ -91,17 +91,20 @@ impl CloudflareBypass {
         let mut headers = HeaderMap::new();
         let headers_map;
         {
-            headers_map = self.headers.lock().await.clone()
+            headers_map = self.headers.clone()
         }
         headers.insert(USER_AGENT, HeaderValue::from_str(headers_map.get("User-Agent").unwrap_or(&DEFAULT_USER_AGENT.to_string())).unwrap());
         if let Some(cookie) = headers_map.get("Cookie") {
             headers.insert(COOKIE, HeaderValue::from_str(cookie).unwrap());
         }
+        // 压缩请求
+        headers.insert(ACCEPT_ENCODING, HeaderValue::from_static("gzip, deflate, zstd"));
+        
         return headers;
     }
     
     pub async fn read_ua_cookie(&mut self) {
-        let mut headers = self.headers.lock().await;
+        let headers = &mut self.headers;
         let path = Path::new("agent.json");
         let content = tokio::fs::read_to_string(&path).await.unwrap();
         if content.len() > 0 {
@@ -130,13 +133,13 @@ impl CloudflareBypass {
         let now = time();
 
         if now - self.last_bypassed > 60 * 1000 {
-            debug!("\n***************** bypass cloudflare *****************");
+            info!("\n***************** bypass cloudflare *****************");
             
 
             let (ua, cookie) = self.bypass().await?;
-            debug!("User-Agent:{ua}");
-            debug!("Cookie:{cookie}");
-            let mut headers = self.headers.lock().await;
+            info!("User-Agent:{ua}");
+            info!("Cookie:{cookie}");
+            let mut headers = &mut self.headers;
             
             if cookie.len() != 0 {
                 headers.insert("Cookie", cookie);
@@ -149,11 +152,11 @@ impl CloudflareBypass {
                 // 记录cookie到本地
                 record_ua_cookie(&*headers).await;
             }
-            debug!("***************** bypass cloudflare *****************\n");
+            info!("***************** bypass cloudflare *****************\n");
 
             self.last_bypassed = time();
         } else {
-            debug!("the distance from the last bypass cloudflare is no more than 60 seconds, ignore this bypass");
+            warn!("the distance from the last bypass cloudflare is no more than 60 seconds, ignore this bypass");
         }
 
         Ok(())
@@ -187,7 +190,7 @@ impl CloudflareBypass {
                     let location: Vec<i32> = bypass.getattr("get_page_location")?.call0()?.extract()?;
                     self.click_button(coords.0 + location[0] + 10, coords.1 + location[1] + 10);
                 }
-                thread::sleep(Duration::from_secs(rng.gen_range(1..3)));
+                thread::sleep(Duration::from_secs(rng.gen_range(2..3)));
             }
             // 获取信息
             let ua: String = bypass.getattr("get_ua")?.call0()?.extract()?;
@@ -211,7 +214,7 @@ impl CloudflareBypass {
     }
 
     pub fn click_button(&self, x: i32, y: i32){
-        debug!("Click cloudflare button for {}-{}", x, y);
+        info!("Click cloudflare button for {}-{}", x, y);
         let mouse = Mouse::new();
         mouse.move_to(x, y).expect("Unable to move mouse");
         mouse.click(&Keys::LEFT).expect("Unable to click button");

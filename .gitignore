@@ -5,3 +5,4 @@ agent.json
 .vscode
 .idea
 download_ids.txt
+exclude_ids.txt
