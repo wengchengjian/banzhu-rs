@@ -30,11 +30,21 @@
 - `error.rs`：错误处理
 - `jdom.py`：JavaScript DOM 操作
 
+## 环境要求
+
+- Python 3.8+
+- Node.js 14+
+- Rust 1.70+
+- OpenCV 4.x
+- 至少 4GB 内存
+- Windows/Linux/MacOS
+
 ## 依赖环境
 
 ### Python 依赖
 - DrissionPage：浏览器自动化和 Cloudflare 绕过
 - execjs：JavaScript 执行
+- opencv-python：图像处理
 
 ### Node.js 依赖
 - jsdom：DOM 操作
@@ -47,20 +57,31 @@
 - config：配置管理
 - encoding：字符编码
 - opencv：图像处理
+- pyo3：Python 绑定
 
 ## 安装设置
 
-1. 安装 Python 依赖：
+1. 安装 Rust（如果未安装）：
 ```bash
-pip install DrissionPage execjs
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
 ```
 
-2. 安装 Node.js 依赖：
+2. 安装 Python 依赖：
 ```bash
-npm install
+pip install DrissionPage execjs opencv-python
 ```
 
-3. 在 `spider.toml` 中配置爬虫设置：
+3. 安装 Node.js 依赖：
+```bash
+npm install jsdom
+```
+
+4. 安装 OpenCV：
+- Windows：从 opencv.org 下载并安装
+- Linux：`sudo apt-get install libopencv-dev`
+- MacOS：`brew install opencv`
+
+5. 在 `spider.toml` 中配置爬虫设置：
 ```toml
 root_url = "目标网站URL"
 max_num = 1000  # 最大下载数量
@@ -96,12 +117,12 @@ cargo run
 
 ## 开发计划
 
-- [ ] 提升并发处理能力
+- [√] 提升并发处理能力
 - [ ] 添加命令行搜索和下载界面
-- [ ] 改进错误处理和恢复机制
-- [ ] 增强日志系统
+- [√] 改进错误处理和恢复机制
+- [√] 增强日志系统
 - [ ] 增加单元测试覆盖率
-- [ ] 完善文档
+- [√] 完善文档
 
 ## 贡献指南
 

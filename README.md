@@ -32,11 +32,21 @@ The project uses a multi-language approach to leverage the strengths of each:
 - `error.rs`: Error handling
 - `jdom.py`: JavaScript DOM operations
 
+## Environment Requirements
+
+- Python 3.8+
+- Node.js 14+
+- Rust 1.70+
+- OpenCV 4.x
+- At least 4GB RAM
+- Windows/Linux/MacOS
+
 ## Dependencies
 
 ### Python
 - DrissionPage: Browser automation and Cloudflare bypass
 - execjs: JavaScript execution
+- opencv-python: Image processing
 
 ### Node.js
 - jsdom: DOM manipulation
@@ -49,20 +59,31 @@ The project uses a multi-language approach to leverage the strengths of each:
 - config: Configuration management
 - encoding: Character encoding
 - opencv: Image processing
+- pyo3: Python bindings
 
 ## Setup
 
-1. Install Python dependencies:
+1. Install Rust (if not already installed):
 ```bash
-pip install DrissionPage execjs
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
 ```
 
-2. Install Node.js dependencies:
+2. Install Python dependencies:
 ```bash
-npm install
+pip install DrissionPage execjs opencv-python
 ```
 
-3. Configure spider settings in `spider.toml`:
+3. Install Node.js dependencies:
+```bash
+npm install jsdom
+```
+
+4. Install OpenCV:
+- Windows: Download and install from opencv.org
+- Linux: `sudo apt-get install libopencv-dev`
+- MacOS: `brew install opencv`
+
+5. Configure spider settings in `spider.toml`:
 ```toml
 root_url = "your_target_url"
 max_num = 1000  # Maximum number of items to download
