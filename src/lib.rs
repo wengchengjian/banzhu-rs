@@ -97,9 +97,7 @@ pub fn get_default_pbr_style() -> ProgressStyle {
 
 pub fn create_multi_pbr() -> MultiProgress {
     let mp = MultiProgress::new();
-    // 设置进度条在底部显示
     mp.set_draw_target(ProgressDrawTarget::stdout());
-    mp.set_move_cursor(true);
     mp
 }
 
