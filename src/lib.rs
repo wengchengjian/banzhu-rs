@@ -2,7 +2,6 @@ pub mod bypass;
 pub mod banzhuspider;
 pub mod task;
 pub mod error;
-
 use crate::error::SpiderError;
 use base64::engine::general_purpose;
 use base64::Engine;
@@ -15,7 +14,7 @@ use pyo3::Python;
 use rand::rngs::OsRng;
 use rand_core::{RngCore, TryRngCore};
 use anyhow::Result;
-use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
+use indicatif::{MultiProgress, ProgressBar, ProgressDrawTarget, ProgressStyle};
 
 type Aes128CbcEnc = cbc::Encryptor<aes::Aes128>;
 type Aes128CbcDec = cbc::Decryptor<aes::Aes128>;
@@ -90,25 +89,24 @@ pub fn encrypt(plain: &[u8]) -> (Vec<u8>, [u8; 16]) {
 }
 
 pub fn get_default_pbr_style() -> ProgressStyle {
-    let style = ProgressStyle::default_bar()
-        .template("{spinner:.green} [{elapsed_precise}] [{wide_bar:.cyan/blue}] {pos}/{len}, {eta})")
+    ProgressStyle::default_bar()
+        .template("{spinner:.green} [{elapsed_precise}] {msg} [{bar:40.cyan/blue}] {pos}/{len} ({eta})")
         .unwrap()
-        .progress_chars("#>-");
-    
-    style
+        .progress_chars("#>-")
 }
 
 pub fn create_multi_pbr() -> MultiProgress {
-    let m = MultiProgress::new();
-    m
+    let mp = MultiProgress::new();
+    // 设置进度条在底部显示
+    mp.set_draw_target(ProgressDrawTarget::stdout());
+    mp.set_move_cursor(true);
+    mp
 }
 
 pub fn create_pbr(count: u64) -> ProgressBar {
-    let pbr = ProgressBar::new(count);
-    
-    pbr.set_style(get_default_pbr_style());
-    
-    pbr
+    let pb = ProgressBar::new(count);
+    pb.set_style(get_default_pbr_style());
+    pb
 }
 
 /// 生成随机 iv

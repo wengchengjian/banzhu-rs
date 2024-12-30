@@ -22,7 +22,7 @@ use std::path::Path;
 use std::sync::Arc;
 use std::time::Duration;
 use std::{fs, thread};
-use log::{info, warn};
+use log::{debug, info, warn};
 use tokio::fs::OpenOptions;
 use tokio::io::AsyncWriteExt;
 
@@ -33,6 +33,8 @@ static ref LANGUAGE_DICTS: HashMap<&'static str, &'static str> =  {
         m.insert("zh-cn","请稍候");
         m
     };
+
+static ref BYPASS_REGEX: Regex = Regex::new(r"<title>(?P<title>.*?)</title>").unwrap();
 
 }
 lazy_static! {
@@ -45,9 +47,7 @@ lazy_static! {
 
 
 pub fn is_bypassed(html: &str) -> bool {
-    let re = Regex::new(r"<title>(?P<title>.*?)</title>").unwrap();
-
-    if let Some(cap) = re.captures(html) {
+    if let Some(cap) = BYPASS_REGEX.captures(html) {
         let title = &cap["title"];
         for val in LANGUAGE_DICTS.values() {
             if title.contains(*val) {
@@ -130,12 +130,12 @@ impl CloudflareBypass {
         let now = time();
 
         if now - self.last_bypassed > 60 * 1000 {
-            info!("\n***************** bypass cloudflare *****************");
+            debug!("\n***************** bypass cloudflare *****************");
             
 
             let (ua, cookie) = self.bypass().await?;
-            info!("User-Agent:{ua}");
-            info!("Cookie:{cookie}");
+            debug!("User-Agent:{ua}");
+            debug!("Cookie:{cookie}");
             let mut headers = self.headers.lock().await;
             
             if cookie.len() != 0 {
@@ -149,11 +149,11 @@ impl CloudflareBypass {
                 // 记录cookie到本地
                 record_ua_cookie(&*headers).await;
             }
-            info!("***************** bypass cloudflare *****************\n");
+            debug!("***************** bypass cloudflare *****************\n");
 
             self.last_bypassed = time();
         } else {
-            warn!("the distance from the last bypass cloudflare is no more than 60 seconds, ignore this bypass");
+            debug!("the distance from the last bypass cloudflare is no more than 60 seconds, ignore this bypass");
         }
 
         Ok(())
@@ -187,7 +187,7 @@ impl CloudflareBypass {
                     let location: Vec<i32> = bypass.getattr("get_page_location")?.call0()?.extract()?;
                     self.click_button(coords.0 + location[0] + 10, coords.1 + location[1] + 10);
                 }
-                thread::sleep(Duration::from_secs(rng.gen_range(3..5)));
+                thread::sleep(Duration::from_secs(rng.gen_range(1..3)));
             }
             // 获取信息
             let ua: String = bypass.getattr("get_ua")?.call0()?.extract()?;
@@ -211,7 +211,7 @@ impl CloudflareBypass {
     }
 
     pub fn click_button(&self, x: i32, y: i32){
-        info!("Click cloudflare button for {}-{}", x, y);
+        debug!("Click cloudflare button for {}-{}", x, y);
         let mouse = Mouse::new();
         mouse.move_to(x, y).expect("Unable to move mouse");
         mouse.click(&Keys::LEFT).expect("Unable to click button");

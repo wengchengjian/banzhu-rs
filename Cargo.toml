@@ -5,6 +5,8 @@ edition = "2021"
 
 [dependencies]
 anyhow = "1.0.95"
+humantime = "2.1.0"
+itertools = "0.12.0"
 opencv = "0.93.5"
 regex = "1.11.1"
 lazy_static = "1.5.0"
@@ -28,3 +30,4 @@ encoding = "0.2.33"
 scraper = "0.21.0"
 env_logger = "0.11.6"
 log = "0.4.22"
+ctrlc = {version = "3.4.0", features = ["termination"]}
