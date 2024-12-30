@@ -6,3 +6,5 @@ agent.json
 .idea
 download_ids.txt
 exclude_ids.txt
+*.log
+agent.json
