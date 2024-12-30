@@ -3,11 +3,13 @@ use crate::task::BanzhuDownloadTask;
 use crate::{create_multi_pbr, create_pbr, Error, DEFAULT_USER_AGENT};
 use aes::cipher;
 use aes::cipher::{ArrayLength, BlockDecrypt, BlockDecryptMut, BlockEncryptMut, KeyInit};
+use anyhow::anyhow;
 use base64::Engine;
 use cipher::typenum::private::Trim;
 use cipher::KeyIvInit;
 use config::{Config, File};
 use encoding::Encoding;
+use futures::executor::block_on;
 use futures::{stream, StreamExt};
 use itertools::Itertools;
 use lazy_static::lazy_static;
@@ -282,9 +284,7 @@ impl BanzhuSpider {
             );
 
             let handle = tokio::task::spawn_blocking(move || {
-                tokio::runtime::Runtime::new()
-                    .unwrap()
-                    .block_on(async {
+                    block_on(async {
                         tokio::select! {
                             _ = rx_clone.recv() => {}
                             result = task.download() => {
