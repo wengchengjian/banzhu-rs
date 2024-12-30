@@ -495,6 +495,8 @@ impl BanzhuDownloadTask {
                     }
                 }
             }
+            // 去除行之间多余空格
+            content = format_novel_content(&content);
             return Ok(content);
         };
 
@@ -558,32 +560,34 @@ impl BanzhuDownloadTask {
         // 只解析一次HTML
         let html = Html::parse_document(&html_str);
         
-        let mut is_content_1 = false;
+        let mut need2format = false;
+
         if let Ok(initial_content) = self.get_section_data1(&html).await {
             content = initial_content;
-            is_content_1 = true;
         }
 
         // 处理其他内容获取方法
         if let Ok(content2) = self.get_section_data2(section_url, &html).await {
-            content = content2;
+            need2format = true;
+            content.push_str(&content2);
         }
         if let Ok(content3) = self.get_section_data3(&html).await {
-            content = content3;
+            need2format = true;
+            content.push_str(&content3);
         }
         if let Ok(content4) = self.get_section_data4(&html).await {
-            content = content4;
-        }
-        let format_str = format!(
-            "<div class=\"neirong\"><div>{}</div></div>",
-            content
-        );
-        if is_content_1 {
-            return Ok(content);
-        } else {
-            Ok(self.format_content(Some(&format_str), None)?)
+            need2format = true;
+            content.push_str(&content4);
         }
 
+        if need2format {
+            content = format!(
+                "<div class=\"neirong\"><div>{}</div></div>",
+                content
+            );
+            return self.format_content(Some(&content), None);
+        }
+        Ok(content)
     }
 
     pub async fn get_sections_url(
@@ -768,7 +772,7 @@ async fn save_book_local_txt(
         .await?;
 
     // 清除多余空格
-    let _ = content.trim();
+    let content = content.trim();
     let mut writer = AsyncBufWriter::with_capacity(128 * 1024, file);
     writer.write_all(content.as_bytes()).await?;
     writer.flush().await?;
@@ -803,4 +807,31 @@ pub fn arr_dup_rem_linked<T: Eq + Clone + Hash>(arr: Vec<T>) -> Vec<T> {
         }
     }
     return uniq_arr;
+}
+
+// 1. 段落之间最多两个换行
+pub fn format_novel_content(content: &String) -> String {
+    // 创建正则表达式，匹配一个或多个换行符
+    let re = Regex::new(r"[\r\n]+").unwrap();
+    // 将所有连续的换行符替换为两个换行符
+    re.replace_all(content, "\n\n").to_string()
+}
+
+#[cfg(test)]
+mod tests {
+    use std::fs;
+
+    #[test]
+    fn test_format_novel_content() {
+        let content = "段落1\n\n\n\n段落2\n\n\n\n段落3\n\n\n段落4\n段落5".to_string();
+        let formatted = super::format_novel_content(&content);
+        assert_eq!(formatted, "段落1\n\n段落2\n\n段落3\n\n段落4\n\n段落5");
+    }
+
+    #[test]
+    fn test_format_file_content() {
+        let content = fs::read_to_string("book/其他类别/[同人]俗人回档h.txt").unwrap();
+        let formatted = super::format_novel_content(&content);
+        fs::write("test.txt", formatted).unwrap();
+    }
 }
