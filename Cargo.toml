@@ -1,7 +1,11 @@
 [package]
 name = "banzhu-spider"
-version = "0.1.0"
+version = "0.3.0"
 edition = "2021"
+
+[[bin]]
+name = "banzhu"
+path = "src/main.rs"
 
 [dependencies]
 anyhow = "1.0.95"
@@ -31,3 +35,11 @@ scraper = "0.21.0"
 env_logger = "0.11.6"
 log = "0.4.22"
 ctrlc = {version = "3.4.0", features = ["termination"]}
+rusqlite = { version = "0.38.0", features = ["bundled", "load_extension", "vtab"] }
+sqlite-simple-tokenizer = "0.5"
+clap = { version = "4.5.4", features = ["derive"] }
+chrono = "0.4.38"
+epub-builder = "0.7.0"
+dirs = "5.0.1"
+toml = "0.8.19"
+epub = "1.2.3"

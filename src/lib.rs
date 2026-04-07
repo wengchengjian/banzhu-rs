@@ -1,7 +1,12 @@
-pub mod bypass;
 pub mod banzhuspider;
-pub mod task;
+pub mod bypass;
+pub mod cli;
+pub mod db;
 pub mod error;
+pub mod task;
+pub mod appconfig;
+pub mod import;
+pub mod search;
 use crate::error::SpiderError;
 use anyhow::Result;
 use base64::engine::general_purpose;
@@ -14,7 +19,7 @@ use pyo3::ffi::c_str;
 use pyo3::prelude::{PyAnyMethods, PyModule};
 use pyo3::Python;
 use rand::rngs::OsRng;
-use rand_core::{RngCore, TryRngCore};
+use rand_core::TryRngCore;
 
 type Aes128CbcEnc = cbc::Encryptor<aes::Aes128>;
 type Aes128CbcDec = cbc::Decryptor<aes::Aes128>;
@@ -31,9 +36,14 @@ pub fn get_section_data_by_py(html: &str, ns: &str) -> Result<String> {
     Python::with_gil(|py| {
         let code = c_str!(include_str!("jdom.py"));
 
-        let jdom = PyModule::from_code(py, code, c_str!("jdom.py"), c_str!("jdom")).expect("Unable to load jdom.py");
+        let jdom = PyModule::from_code(py, code, c_str!("jdom.py"), c_str!("jdom"))
+            .expect("Unable to load jdom.py");
 
-        let content = jdom.getattr("get_section_data_by_js")?.call1((html, ns))?.extract::<String>().unwrap_or(String::new());
+        let content = jdom
+            .getattr("get_section_data_by_js")?
+            .call1((html, ns))?
+            .extract::<String>()
+            .unwrap_or(String::new());
         Ok(content)
     })
 }
@@ -46,17 +56,19 @@ pub fn decrpyt_aes_128_cbc(cipher_text: &[u8], code: &[u8]) -> Result<Vec<u8>, S
     let iv = &mx[..16].bytes().collect::<Vec<_>>();
     let key = &mx[16..].bytes().collect::<Vec<_>>();
     // base64解密
-    let cipher_text = general_purpose::STANDARD.decode(cipher_text).expect("Error while decoding");
+    let cipher_text = general_purpose::STANDARD
+        .decode(cipher_text)
+        .expect("Error while decoding");
 
     let cipher_len = cipher_text.len();
-    
-    let mut buf = vec![0; cipher_len];
 
+    let mut buf = vec![0; cipher_len];
 
     buf[..cipher_len].copy_from_slice(&cipher_text);
 
     // 解密
-    let pt = Aes128CbcDec::new_from_slices(&key, &iv).unwrap()
+    let pt = Aes128CbcDec::new_from_slices(&key, &iv)
+        .unwrap()
         .decrypt_padded_mut::<Pkcs7>(&mut buf)
         .unwrap();
     Ok(pt.to_vec())
@@ -90,7 +102,9 @@ pub fn encrypt(plain: &[u8]) -> (Vec<u8>, [u8; 16]) {
 
 pub fn get_default_pbr_style() -> ProgressStyle {
     ProgressStyle::default_bar()
-        .template("{spinner:.green} [{elapsed_precise}] {msg} [{bar:40.cyan/blue}] {pos}/{len} ({eta})")
+        .template(
+            "{spinner:.green} [{elapsed_precise}] {msg} [{bar:40.cyan/blue}] {pos}/{len} ({eta})",
+        )
         .unwrap()
         .progress_chars("#>-")
 }

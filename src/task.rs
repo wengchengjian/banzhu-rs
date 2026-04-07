@@ -1,18 +1,15 @@
 use crate::banzhuspider::{add_download_book_id, add_exclude_book_id, SpiderConfig};
 use crate::bypass::{is_bypassed, CloudflareBypass};
 use crate::error::SpiderError;
-use crate::error::SpiderError::{DecodingError, HtmlParseError, NotFoundChapters, RequestError};
-use crate::{create_pbr, decrpyt_aes_128_cbc, get_section_data_by_py, POST_TEXT};
+use crate::{create_pbr, decrpyt_aes_128_cbc, get_section_data_by_py};
 use anyhow::{anyhow, Result};
 use config::Config;
 use encoding::all::GBK;
 use encoding::{DecoderTrap, Encoding};
 use futures::stream::{self, StreamExt};
-use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
-use itertools::any;
+use indicatif::{MultiProgress, ProgressBar};
 use lazy_static::lazy_static;
 use log::{debug, error, info, warn};
-use opencv::gapi::any;
 use regex::Regex;
 use reqwest::{Client, Response};
 use scraper::selectable::Selectable;
@@ -21,15 +18,12 @@ use serde_json::{json, Value};
 use std::collections::{HashMap, HashSet};
 use std::fmt::{Display, Formatter};
 use std::hash::Hash;
-use std::io::{BufWriter, Stdout};
 use std::ops::Deref;
 use std::path::Path;
-use std::string::FromUtf8Error;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::fs::{create_dir_all, OpenOptions};
 use tokio::io::{AsyncWriteExt, BufWriter as AsyncBufWriter};
-use tokio::sync::Mutex;
 use tokio::sync::RwLock;
 use tokio::time::sleep;
 
@@ -131,22 +125,55 @@ impl<'a> Drop for ProgressGuard<'a> {
 }
 
 impl BanzhuDownloadTask {
-    pub fn new(root_url: String, book_id: u32, config: Arc<Config>,
-               img_fanpa_dict: Arc<HashMap<String, String>>,
-               font_fanpa_dict: Arc<HashMap<String, String>>,
-               client: Arc<Client>, cf: Arc<RwLock<CloudflareBypass>>, multi_pbr: MultiProgress, spider_config: Arc<SpiderConfig>) -> Self {
-        BanzhuDownloadTask {root_url, book_id, config, img_fanpa_dict, font_fanpa_dict, client, cf, multi_pbr, spider_config }
+    pub fn new(
+        root_url: String,
+        book_id: u32,
+        config: Arc<Config>,
+        img_fanpa_dict: Arc<HashMap<String, String>>,
+        font_fanpa_dict: Arc<HashMap<String, String>>,
+        client: Arc<Client>,
+        cf: Arc<RwLock<CloudflareBypass>>,
+        multi_pbr: MultiProgress,
+        spider_config: Arc<SpiderConfig>,
+    ) -> Self {
+        BanzhuDownloadTask {
+            root_url,
+            book_id,
+            config,
+            img_fanpa_dict,
+            font_fanpa_dict,
+            client,
+            cf,
+            multi_pbr,
+            spider_config,
+        }
     }
 
-    pub async fn post_client_request(&self, url: &str, data: &Value) -> Result<Response, SpiderError> {
+    pub async fn post_client_request(
+        &self,
+        url: &str,
+        data: &Value,
+    ) -> Result<Response, SpiderError> {
         let headers = self.cf.read().await.get_headers().await;
 
-        Ok(self.client.post(url).json(data).headers(headers).send().await?)
+        Ok(self
+            .client
+            .post(url)
+            .json(data)
+            .headers(headers)
+            .send()
+            .await?)
     }
 
     pub async fn get_client_request(&self, url: &str) -> Result<Response, reqwest::Error> {
         let headers = self.cf.read().await.get_headers().await;
-        Ok(self.client.get(url).timeout(self.spider_config.request_timeout).headers(headers).send().await?)
+        Ok(self
+            .client
+            .get(url)
+            .timeout(self.spider_config.request_timeout)
+            .headers(headers)
+            .send()
+            .await?)
     }
 
     async fn post_text(&self, url: &str, text: &Value) -> Result<String> {
@@ -165,7 +192,7 @@ impl BanzhuDownloadTask {
         Err(anyhow!("未知异常"))
     }
 
-    async fn bypass_cloudflare(&self) -> Result<()>{
+    async fn bypass_cloudflare(&self) -> Result<()> {
         Ok(self.cf.write().await.bypass_cloudflare().await?)
     }
 
@@ -209,8 +236,13 @@ impl BanzhuDownloadTask {
     }
 
     pub async fn download(&self) -> Result<()> {
-        let url = format!("{}/{}/{}/", self.root_url, self.book_id / 1000, self.book_id);
-        debug!("crawl book {}: {url}",self.book_id);
+        let url = format!(
+            "{}/{}/{}/",
+            self.root_url,
+            self.book_id / 1000,
+            self.book_id
+        );
+        debug!("crawl book {}: {url}", self.book_id);
 
         if let Some(captures) = URL_REGEX.captures(&url) {
             if !URL_REGEX.is_match(&url) {
@@ -223,9 +255,10 @@ impl BanzhuDownloadTask {
                 Ok(text) => {
                     let text = text.as_str();
                     if text.len() > 0 {
-                        let dir = self.config
-                        .get_string("save_path")
-                        .unwrap_or("book".to_string());
+                        let dir = self
+                            .config
+                            .get_string("save_path")
+                            .unwrap_or("book".to_string());
 
                         let html = Html::parse_document(text);
 
@@ -240,11 +273,7 @@ impl BanzhuDownloadTask {
                                     return Ok(());
                                 }
                                 let chapters = self.get_chapters_content(&book).await?;
-                                save_book_local_txt(
-                                    &book,
-                                    &chapters,
-                                    &dir,
-                                ).await?;
+                                save_book_local_txt(&book, &chapters, &dir).await?;
                                 add_download_book_id(book.id as u32).await;
                             }
                             Err(e) => {
@@ -254,7 +283,6 @@ impl BanzhuDownloadTask {
                                 return Err(e);
                             }
                         }
-
                     }
                 }
                 Err(_) => {
@@ -270,25 +298,29 @@ impl BanzhuDownloadTask {
 
     pub async fn get_info(&self, id: usize, html: &Html) -> Result<Book> {
         let page_sec = Selector::parse(".pagelistbox .page").unwrap();
-        let page = html.select(&page_sec).next().ok_or(anyhow!("html解析异常"))?;
+        let page = html
+            .select(&page_sec)
+            .next()
+            .ok_or(anyhow!("html解析异常"))?;
         let page_text = page.inner_html();
         let page: u8 = PAGE_REGEX.captures(&page_text).unwrap()["page"]
             .to_string()
             .parse()?;
-        
+
         let book_sec = Selector::parse("h1").unwrap();
-        let book_name = html.select(&book_sec)
+        let book_name = html
+            .select(&book_sec)
             .next()
             .unwrap()
             .text()
             .next()
             .ok_or(anyhow!("没找到book:{id}的name",))?
             .to_string();
-        
+
         let mut introduce = String::new();
-        
+
         let bd_sec = Selector::parse(".bd").unwrap();
-        
+
         let bd = html.select(&bd_sec).next();
         if let Some(bd) = bd {
             if let Some(text) = bd.text().next() {
@@ -298,10 +330,7 @@ impl BanzhuDownloadTask {
             }
         }
         let info_sec = Selector::parse(".info").unwrap();
-        let mut info = html
-            .select(&info_sec)
-            .next().unwrap()
-            .text();
+        let mut info = html.select(&info_sec).next().unwrap().text();
         let author = split_second(info.next().unwrap(), "：")?;
         let book_category = split_second(info.next().unwrap(), "：")?;
         let book_count: u32 = split_second(info.next().unwrap(), "：")?.parse().unwrap();
@@ -325,15 +354,14 @@ impl BanzhuDownloadTask {
         return Ok(book);
     }
 
-    pub async fn get_chapters_content(
-        &self,
-        book: &Book,
-    ) -> Result<Vec<Chapter>> {
+    pub async fn get_chapters_content(&self, book: &Book) -> Result<Vec<Chapter>> {
         let mut page_urls = vec![];
         for page in 1..book.page + 1 {
             let page_url = format!(
                 "{}/{}/{}_{}/",
-                self.config.get_string("root_url").expect("not found root_url"),
+                self.config
+                    .get_string("root_url")
+                    .expect("not found root_url"),
                 book.num,
                 book.id,
                 page
@@ -341,7 +369,7 @@ impl BanzhuDownloadTask {
             page_urls.push(page_url);
         }
         let mut chapters = self.get_chapters_url(page_urls).await?;
-        
+
         if chapters.len() == 0 {
             return Err(anyhow!("未发现chapter"));
         }
@@ -352,33 +380,27 @@ impl BanzhuDownloadTask {
         Ok(chapters)
     }
 
-    pub async fn get_sections_data(
-        &self,
-        chapters: &mut Vec<Chapter>,
-        book: &Book,
-    ) -> Result<()> {
+    pub async fn get_sections_data(&self, chapters: &mut Vec<Chapter>, book: &Book) -> Result<()> {
         debug!("正在获取Section Data...");
-        let pbr = self.multi_pbr.add(create_pbr(get_chapter_section_num(chapters)));
+        let pbr = self
+            .multi_pbr
+            .add(create_pbr(get_chapter_section_num(chapters)));
         pbr.set_message(format!("{}-{}", book.title, book.id));
-        
+
         // 使用 ProgressGuard 来确保进度条被清理
         let guard = ProgressGuard {
             multi_pbr: &self.multi_pbr,
             pbr: pbr.clone(),
         };
-        
+
         let ret = self.get_sections_data_pbr(chapters, &guard.pbr).await;
-        
+
         // guard 会在函数结束时自动调用 drop，确保进度条被移除
         ret
     }
 
     /// 接口返回的整个html
-    async fn get_section_data2(
-        &self,
-        url: &str,
-        html: &Html,
-    ) -> Result<String> {
+    async fn get_section_data2(&self, url: &str, html: &Html) -> Result<String> {
         let html_str = html.html();
         let mut content = String::new();
         if SECTION_DATA_REGEX2.is_match(&html_str) {
@@ -420,7 +442,8 @@ impl BanzhuDownloadTask {
             let content = String::from_utf8(content).unwrap_or_else(|e| {
                 let arr = e.into_bytes();
                 // utf8失败了就用gbk试试
-                GBK.decode(&arr, DecoderTrap::Strict).expect(format!("编码错误:{html_str}").as_str())
+                GBK.decode(&arr, DecoderTrap::Strict)
+                    .expect(format!("编码错误:{html_str}").as_str())
             });
             return Ok(content);
         }
@@ -432,14 +455,14 @@ impl BanzhuDownloadTask {
 
     fn format_content(&self, html_str: Option<&str>, html: Option<&Html>) -> Result<String> {
         let mut html2 = None;
-        if let Some(html_str) = html_str{
+        if let Some(html_str) = html_str {
             html2 = Some(Html::parse_document(html_str))
         }
 
         let html = {
             if let Some(html) = html {
                 Some(html)
-            } else if let Some(html_str) = html_str{
+            } else if let Some(_html_str) = html_str {
                 Some(html2.as_ref().unwrap())
             } else {
                 None
@@ -448,11 +471,10 @@ impl BanzhuDownloadTask {
 
         if let Some(html) = html {
             let nodes = html
-                .select(&Selector::parse(".neirong div").map_err(|e| anyhow!("html解析失败"))?)
+                .select(&Selector::parse(".page-content p").map_err(|_e| anyhow!("html解析失败"))?)
                 .next()
-                .ok_or(anyhow!("没有neirong节点"))?
+                .ok_or(anyhow!("没有page-content节点"))?
                 .descendants();
-
 
             let mut content = String::new();
             for node in nodes {
@@ -501,15 +523,16 @@ impl BanzhuDownloadTask {
         };
 
         Err(anyhow!("参数错误"))
-
     }
 
-    pub async fn get_sections_data_pbr(&self,
-                                       chapters: &mut Vec<Chapter>,
-                                       pbr: &ProgressBar) -> Result<()> {
+    pub async fn get_sections_data_pbr(
+        &self,
+        chapters: &mut Vec<Chapter>,
+        pbr: &ProgressBar,
+    ) -> Result<()> {
         // 使用固定大小的缓冲区来控制并发
         let concurrency = 8;
-        
+
         // 收集所有需要处理的章节
         let mut all_sections = Vec::new();
         for chapter in chapters.iter_mut() {
@@ -543,57 +566,52 @@ impl BanzhuDownloadTask {
                     }
                 }
                 Err(e) => {
-                    return Err(anyhow!("Failed to process section in chapter {}: {}", chapter_title, e));
+                    return Err(anyhow!(
+                        "Failed to process section in chapter {}: {}",
+                        chapter_title,
+                        e
+                    ));
                 }
             }
         }
-        
+
         Ok(())
     }
 
     async fn process_section(&self, section_url: &str) -> Result<String> {
         let html_str = self.get(section_url).await?;
-        
+
         // 预分配一个合理的容量来存储内容
         let mut content = String::new();
-        
+
         // 只解析一次HTML
         let html = Html::parse_document(&html_str);
-        
+
         let mut need2format = false;
 
         if let Ok(initial_content) = self.get_section_data1(&html).await {
             content = initial_content;
         }
-
         // 处理其他内容获取方法
-        if let Ok(content2) = self.get_section_data2(section_url, &html).await {
+        else if let Ok(content2) = self.get_section_data2(section_url, &html).await {
             need2format = true;
-            content.push_str(&content2);
-        }
-        if let Ok(content3) = self.get_section_data3(&html).await {
+            content = content2;
+        } else if let Ok(content3) = self.get_section_data3(&html).await {
             need2format = true;
-            content.push_str(&content3);
-        }
-        if let Ok(content4) = self.get_section_data4(&html).await {
+            content = content3;
+        } else if let Ok(content4) = self.get_section_data4(&html).await {
             need2format = true;
-            content.push_str(&content4);
+            content = content4;
         }
 
         if need2format {
-            content = format!(
-                "<div class=\"neirong\"><div>{}</div></div>",
-                content
-            );
+            content = format!("<div class=\"page-content\"><div>{}</div></div>", content);
             return self.format_content(Some(&content), None);
         }
         Ok(content)
     }
 
-    pub async fn get_sections_url(
-        &self,
-        chapters: &mut Vec<Chapter>,
-    ) -> Result<()> {
+    pub async fn get_sections_url(&self, chapters: &mut Vec<Chapter>) -> Result<()> {
         debug!("正在获取Section URL...");
         let concurrency = 8;
 
@@ -602,12 +620,13 @@ impl BanzhuDownloadTask {
                 async move {
                     let html_str = self.get(&chapter.url).await?;
                     let html = Html::parse_document(&html_str);
-                    let selector = Selector::parse(".chapterPages a").map_err(|e| anyhow!("html解析异常"))?;
+                    let selector =
+                        Selector::parse(".chapterPages a").map_err(|_e| anyhow!("html解析异常"))?;
                     let section_list = html.select(&selector);
                     let mut sections = vec![];
 
                     let mut section_num = 1;
-                    let mut sec_num_list = vec! [];
+                    let mut sec_num_list = vec![];
                     for section_l in section_list {
                         section_num += 1;
                         let num: u8 = SECTION_NUM_REGEX
@@ -636,7 +655,8 @@ impl BanzhuDownloadTask {
                     chapter.sections = Some(sections);
                     Ok(())
                 }
-            }).buffer_unordered(concurrency)
+            })
+            .buffer_unordered(concurrency)
             .collect::<Vec<_>>()
             .await;
         for ret in result {
@@ -647,36 +667,32 @@ impl BanzhuDownloadTask {
         Ok(())
     }
 
-    pub async fn get_chapters_url(
-        &self,
-        page_urls: Vec<String>,
-    ) -> Result<Vec<Chapter>> {
+    pub async fn get_chapters_url(&self, page_urls: Vec<String>) -> Result<Vec<Chapter>> {
         info!("正在获取Chapter URL...");
         let mut chapters = vec![];
         let concurrency = 8;
         let result = stream::iter(page_urls)
-            .map(|url| {
-                async move {
-                    let mut chapters = vec![];
-                    let content = self.get(&url).await?;
+            .map(|url| async move {
+                let mut chapters = vec![];
+                let content = self.get(&url).await?;
 
-                    let html = Html::parse_document(&content);
-                    let selector = Selector::parse(".chapter-list").unwrap();
-                    let a_selector = Selector::parse(".bd .list li a").unwrap();
-                    let chapter_list = html.select(&selector).nth(1);
-                    if let Some(chapter_list) = chapter_list {
-                        for chapter in chapter_list.select(&a_selector) {
-                            if let Some(href) = chapter.attr("href") {
-                                if let Some(title) = chapter.text().next() {
-                                    let url = format!("{}{}", self.root_url, href);
-                                    chapters.push(Chapter::new(url, title.to_string()))
-                                }
+                let html = Html::parse_document(&content);
+                let selector = Selector::parse(".chapter-list").unwrap();
+                let a_selector = Selector::parse(".bd .list li a").unwrap();
+                let chapter_list = html.select(&selector).nth(1);
+                if let Some(chapter_list) = chapter_list {
+                    for chapter in chapter_list.select(&a_selector) {
+                        if let Some(href) = chapter.attr("href") {
+                            if let Some(title) = chapter.text().next() {
+                                let url = format!("{}{}", self.root_url, href);
+                                chapters.push(Chapter::new(url, title.to_string()))
                             }
                         }
                     }
-                    anyhow::Ok(chapters)
                 }
-            }).buffered(concurrency)
+                anyhow::Ok(chapters)
+            })
+            .buffered(concurrency)
             .collect::<Vec<_>>()
             .await;
         for ret in result {
@@ -686,9 +702,7 @@ impl BanzhuDownloadTask {
                         chapters.extend(chapter);
                     }
                 }
-                Err(e) => {
-                    return Err(anyhow!("获取chapter失败:{}", e))
-                }
+                Err(e) => return Err(anyhow!("获取chapter失败:{}", e)),
             }
         }
         if !chapters.is_empty() {
@@ -702,7 +716,6 @@ pub fn char_to_unicode(c: char) -> String {
     let unicode_value: u32 = c as u32;
     format!(r"\u{:x}", unicode_value)
 }
-
 
 fn get_chapter_section_num(chapters: &Vec<Chapter>) -> u64 {
     let mut num = 0;
@@ -721,11 +734,7 @@ fn check_local_book_exist(book: &Book, dir: &str) -> Result<bool> {
     Ok(Path::new(&filename).exists())
 }
 
-async fn save_book_local_txt(
-    book: &Book,
-    chapters: &Vec<Chapter>,
-    dir: &str
-) -> Result<()> {
+async fn save_book_local_txt(book: &Book, chapters: &Vec<Chapter>, dir: &str) -> Result<()> {
     // 创建目录
     let mut category = book.category.clone();
     if category.is_empty() {
@@ -735,7 +744,8 @@ async fn save_book_local_txt(
     create_dir_all(&dir).await?;
 
     // 预分配缓冲区
-    let estimated_size = chapters.iter()
+    let estimated_size = chapters
+        .iter()
         .filter_map(|c| c.sections.as_ref())
         .flat_map(|s| s.iter())
         .filter_map(|s| s.content.as_ref())
@@ -780,7 +790,10 @@ async fn save_book_local_txt(
     Ok(())
 }
 fn split_second(s: &str, pattern: &str) -> Result<String> {
-    Ok(s.split(pattern).collect::<Vec<&str>>().get(1).ok_or(anyhow!("解析错误"))?
+    Ok(s.split(pattern)
+        .collect::<Vec<&str>>()
+        .get(1)
+        .ok_or(anyhow!("解析错误"))?
         .trim()
         .to_string())
 }
