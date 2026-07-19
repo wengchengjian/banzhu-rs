@@ -87,7 +87,7 @@ mod tests {
         let book = BookRecord {
             id: 0,
             website_book_id: None,
-            num: 0,
+            path_num: 0,
             title: title.to_string(),
             filename: title.to_string(),
             author: author.to_string(),
@@ -96,7 +96,8 @@ mod tests {
             likes: 100,
             word_count: content.len() as i64,
             page_count: 1,
-            download_time: "2025-01-01 00:00:00".to_string(),
+            created_at: 0,
+            updated_at: 0,
         };
 
         let chapters = vec![(
@@ -106,6 +107,7 @@ mod tests {
                 title: "第一章".to_string(),
                 url: String::new(),
                 chapter_order: 1,
+                word_count: 0,
             },
             vec![SectionRecord {
                 id: 0,
@@ -140,7 +142,7 @@ mod tests {
         let book = BookRecord {
             id: 0,
             website_book_id: None,
-            num: 0,
+            path_num: 0,
             title: "测试小说".to_string(),
             filename: "测试小说".to_string(),
             author: "测试作者".to_string(),
@@ -149,7 +151,8 @@ mod tests {
             likes: 100,
             word_count: 500000,
             page_count: 5,
-            download_time: "2025-01-01 00:00:00".to_string(),
+            created_at: 0,
+            updated_at: 0,
         };
 
         let book_id = db.insert_book(&book).unwrap();
@@ -170,7 +173,7 @@ mod tests {
         let book = BookRecord {
             id: 0,
             website_book_id: None,
-            num: 0,
+            path_num: 0,
             title: "测试".to_string(),
             filename: "测试".to_string(),
             author: "".to_string(),
@@ -179,7 +182,8 @@ mod tests {
             likes: 0,
             word_count: 0,
             page_count: 0,
-            download_time: "".to_string(),
+            created_at: 0,
+            updated_at: 0,
         };
         let book_id = db.insert_book(&book).unwrap();
 
@@ -194,7 +198,7 @@ mod tests {
         let book = BookRecord {
             id: 0,
             website_book_id: None,
-            num: 0,
+            path_num: 0,
             title: "测试".to_string(),
             filename: "测试".to_string(),
             author: "".to_string(),
@@ -203,7 +207,8 @@ mod tests {
             likes: 0,
             word_count: 0,
             page_count: 0,
-            download_time: "".to_string(),
+            created_at: 0,
+            updated_at: 0,
         };
         let book_id = db.insert_book(&book).unwrap();
 
@@ -213,6 +218,7 @@ mod tests {
             title: "第一章".to_string(),
             url: "http://example.com/ch1".to_string(),
             chapter_order: 1,
+            word_count: 0,
         };
         let _chapter_id = db.insert_chapter(&chapter).unwrap();
 
@@ -228,7 +234,7 @@ mod tests {
         let book = BookRecord {
             id: 0,
             website_book_id: None,
-            num: 0,
+            path_num: 0,
             title: "测试".to_string(),
             filename: "测试".to_string(),
             author: "".to_string(),
@@ -237,7 +243,8 @@ mod tests {
             likes: 0,
             word_count: 0,
             page_count: 0,
-            download_time: "".to_string(),
+            created_at: 0,
+            updated_at: 0,
         };
         let book_id = db.insert_book(&book).unwrap();
 
@@ -247,6 +254,7 @@ mod tests {
             title: "第一章".to_string(),
             url: "http://example.com/ch1".to_string(),
             chapter_order: 1,
+            word_count: 0,
         };
         let chapter_id = db.insert_chapter(&chapter).unwrap();
 
@@ -272,7 +280,7 @@ mod tests {
         let book1 = BookRecord {
             id: 0,
             website_book_id: None,
-            num: 0,
+            path_num: 0,
             title: "斗破苍穹".to_string(),
             filename: "斗破苍穹".to_string(),
             author: "天蚕土豆".to_string(),
@@ -281,13 +289,14 @@ mod tests {
             likes: 1000,
             word_count: 5000000,
             page_count: 10,
-            download_time: "2025-01-01 00:00:00".to_string(),
+            created_at: 0,
+            updated_at: 0,
         };
 
         let book2 = BookRecord {
             id: 0,
             website_book_id: None,
-            num: 0,
+            path_num: 0,
             title: "斗罗大陆".to_string(),
             filename: "斗罗大陆".to_string(),
             author: "唐家三少".to_string(),
@@ -296,7 +305,8 @@ mod tests {
             likes: 800,
             word_count: 3000000,
             page_count: 8,
-            download_time: "2025-01-02 00:00:00".to_string(),
+            created_at: 0,
+            updated_at: 0,
         };
 
         db.insert_book(&book1).unwrap();
@@ -310,6 +320,7 @@ mod tests {
             title: "第一章".to_string(),
             url: "".to_string(),
             chapter_order: 1,
+            word_count: 0,
         };
         db.insert_chapter(&chapter).unwrap();
 
@@ -328,7 +339,7 @@ mod tests {
         let book = BookRecord {
             id: 0,
             website_book_id: None,
-            num: 0,
+            path_num: 0,
             title: "测试".to_string(),
             filename: "测试".to_string(),
             author: "".to_string(),
@@ -337,7 +348,8 @@ mod tests {
             likes: 0,
             word_count: 0,
             page_count: 0,
-            download_time: "".to_string(),
+            created_at: 0,
+            updated_at: 0,
         };
         let book_id = db.insert_book(&book).unwrap();
         assert!(db.book_exists(book_id).unwrap());
@@ -355,7 +367,7 @@ mod tests {
         let book = BookRecord {
             id: 0,
             website_book_id: None,
-            num: 0,
+            path_num: 0,
             title: "测试小说".to_string(),
             filename: "测试小说".to_string(),
             author: "作者".to_string(),
@@ -364,7 +376,8 @@ mod tests {
             likes: 50,
             word_count: 100000,
             page_count: 3,
-            download_time: "2025-01-01 00:00:00".to_string(),
+            created_at: 0,
+            updated_at: 0,
         };
 
         let chapters = vec![
@@ -375,6 +388,7 @@ mod tests {
                     title: "第一章".to_string(),
                     url: "http://example.com/1".to_string(),
                     chapter_order: 1,
+                    word_count: 0,
                 },
                 vec![SectionRecord {
                     id: 0,
@@ -392,6 +406,7 @@ mod tests {
                     title: "第二章".to_string(),
                     url: "http://example.com/2".to_string(),
                     chapter_order: 2,
+                    word_count: 0,
                 },
                 vec![SectionRecord {
                     id: 0,
@@ -423,7 +438,7 @@ mod tests {
         let book = BookRecord {
             id: 0,
             website_book_id: None,
-            num: 0,
+            path_num: 0,
             title: "测试".to_string(),
             filename: "测试".to_string(),
             author: "".to_string(),
@@ -432,7 +447,8 @@ mod tests {
             likes: 0,
             word_count: 0,
             page_count: 0,
-            download_time: "".to_string(),
+            created_at: 0,
+            updated_at: 0,
         };
         let book_id = db.insert_book(&book).unwrap();
 
@@ -442,6 +458,7 @@ mod tests {
             title: "第三章".to_string(),
             url: "".to_string(),
             chapter_order: 3,
+            word_count: 0,
         };
         db.insert_chapter(&chapter).unwrap();
 
