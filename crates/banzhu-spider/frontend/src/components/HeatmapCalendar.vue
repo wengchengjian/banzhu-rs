@@ -60,17 +60,19 @@ const cells = computed<Cell[]>(() => {
   return result
 })
 
-// 53 列 × 7 行（周日起始，GitHub 风格）
-// 前置 null 让 1/1 落在 firstWeekday 位置；补齐到 371 格
+// 动态列数 × 7 行（周日起始，GitHub 风格）
+// 前置 null 让 1/1 落在 firstWeekday 位置；补齐到 columnCount * 7 格
+// 通常 53 列；闰年且 1/1 为周六时为 54 列（366 + 6 = 372 > 371）
 const grid = computed<(Cell | null)[][]>(() => {
   const firstWeekday = new Date(props.year, 0, 1).getDay() // 0=周日
   const padded: (Cell | null)[] = []
   for (let i = 0; i < firstWeekday; i++) padded.push(null)
   padded.push(...cells.value)
-  while (padded.length < 371) padded.push(null)
+  const columnCount = Math.ceil(padded.length / 7)
+  while (padded.length < columnCount * 7) padded.push(null)
 
   const columns: (Cell | null)[][] = []
-  for (let i = 0; i < 53; i++) {
+  for (let i = 0; i < columnCount; i++) {
     columns.push(padded.slice(i * 7, (i + 1) * 7))
   }
   return columns
@@ -117,28 +119,31 @@ function tooltipForCell(cell: Cell | null | undefined): string {
 <template>
   <div class="heatmap-calendar">
     <div class="heatmap-scroll overflow-x-auto">
-      <div class="heatmap-grid">
-        <!-- 第 0 行：左上角占位 + 53 列月份标签 -->
+      <div
+        class="heatmap-grid"
+        :style="{ gridTemplateColumns: `20px repeat(${grid.length}, 10px)` }"
+      >
+        <!-- 第 0 行：左上角占位 + 月份标签（动态列数） -->
         <div class="corner" />
         <div
-          v-for="col in 53"
-          :key="`m-${col}`"
+          v-for="(column, colIdx) in grid"
+          :key="`m-${colIdx}`"
           class="month-label"
         >
-          {{ monthLabelAt(col - 1) }}
+          {{ monthLabelAt(colIdx) }}
         </div>
 
-        <!-- 第 1-7 行：星期标签 + 53 个 cell -->
+        <!-- 第 1-7 行：星期标签 + 动态列数 cell -->
         <template v-for="row in 7" :key="`r-${row}`">
           <div class="weekday-label">
             {{ weekdayLabel(row - 1) }}
           </div>
           <div
-            v-for="col in 53"
-            :key="`c-${col}-${row}`"
+            v-for="(column, colIdx) in grid"
+            :key="`c-${colIdx}-${row}`"
             class="cell"
-            :style="{ backgroundColor: colorForCell(grid[col - 1]?.[row - 1]) }"
-            :title="tooltipForCell(grid[col - 1]?.[row - 1])"
+            :style="{ backgroundColor: colorForCell(grid[colIdx]?.[row - 1]) }"
+            :title="tooltipForCell(grid[colIdx]?.[row - 1])"
           />
         </template>
       </div>
@@ -167,7 +172,6 @@ function tooltipForCell(cell: Cell | null | undefined): string {
 
 .heatmap-grid {
   display: grid;
-  grid-template-columns: 20px repeat(53, 10px);
   grid-template-rows: 16px repeat(7, 10px);
   gap: 2px;
   min-width: min-content;
