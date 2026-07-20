@@ -6,6 +6,7 @@ import { shelfApi } from '@/api/shelf'
 import { progressApi } from '@/api/progress'
 import { useToast } from '@/composables/useToast'
 import { useConfirm } from '@/composables/useConfirm'
+import { useChapterCache } from '@/composables/useChapterCache'
 import { formatWordCount, formatDate, formatNumber } from '@/utils/format'
 import type { BookDetail, ChapterListItem } from '@/types/books'
 import type { ReadingProgressRecord } from '@/types/api/ReadingProgressRecord'
@@ -17,6 +18,7 @@ const route = useRoute()
 const router = useRouter()
 const toast = useToast()
 const { confirm } = useConfirm()
+const cache = useChapterCache()
 
 const book = ref<BookDetail | null>(null)
 const chapters = ref<ChapterListItem[]>([])
@@ -24,9 +26,52 @@ const progress = ref<ReadingProgressRecord | null>(null)
 const inShelf = ref(false)
 const initialLoading = ref(true)
 const errorMsg = ref('')
+const cachedCount = ref(0)
 
 const bookId = computed(() => Number(route.params.id))
 const startOrder = computed(() => progress.value?.chapter_order ?? 1)
+
+async function refreshCacheCount() {
+  if (!bookId.value) return
+  cachedCount.value = await cache.getBookCount(bookId.value).catch(() => 0)
+}
+
+async function deleteCache() {
+  if (!book.value) return
+  const ok = await confirm({
+    title: '删除缓存',
+    message: `确认删除《${book.value.title}》的 ${cachedCount.value} 章缓存？`,
+    confirmText: '删除',
+  })
+  if (!ok) return
+  try {
+    // 1. 删除 IndexedDB 缓存
+    await cache.deleteBook(bookId.value)
+    // 2. 同时清理 SW Cache（chapters-cache）
+    if ('caches' in window) {
+      const swCache = await caches.open('chapters-cache')
+      const keys = await swCache.keys()
+      await Promise.all(
+        keys
+          .filter(req => req.url.includes(`/api/books/${bookId.value}/chapters/`))
+          .map(req => swCache.delete(req)),
+      )
+      // 同时清理 books-cache（书籍详情缓存）
+      const booksCache = await caches.open('books-cache')
+      const bookKeys = await booksCache.keys()
+      await Promise.all(
+        bookKeys
+          .filter(req => req.url.includes(`/api/books/${bookId.value}`))
+          .filter(req => req.url.match(/\/api\/books\/\d+\/?$/))
+          .map(req => booksCache.delete(req)),
+      )
+    }
+    toast.success('缓存已删除')
+    await refreshCacheCount()
+  } catch {
+    toast.error('删除失败')
+  }
+}
 
 onMounted(async () => {
   try {
@@ -45,6 +90,7 @@ onMounted(async () => {
   } finally {
     initialLoading.value = false
   }
+  await refreshCacheCount()
 })
 
 function startReading() {
@@ -182,9 +228,21 @@ async function deleteBook() {
 
       <!-- 章节列表区 -->
       <div>
-        <h2 class="mb-3 text-lg font-medium text-gray-900 dark:text-gray-100">
-          章节列表（共 {{ chapters.length }} 章）
-        </h2>
+        <div class="mb-3 flex items-center justify-between gap-2">
+          <h2 class="text-lg font-medium text-gray-900 dark:text-gray-100">
+            章节列表（共 {{ chapters.length }} 章）
+          </h2>
+          <div class="flex items-center gap-2 text-xs text-gray-500 dark:text-gray-400">
+            <span>已缓存 {{ cachedCount }} / {{ chapters.length }} 章</span>
+            <button
+              v-if="cachedCount > 0"
+              class="text-orange-500 hover:underline"
+              @click="deleteCache"
+            >
+              删除缓存
+            </button>
+          </div>
+        </div>
         <ChapterList
           :chapters="chapters"
           :current-order="progress?.chapter_order"

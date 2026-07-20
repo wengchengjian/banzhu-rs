@@ -21,3 +21,14 @@ window.addEventListener('unhandledrejection', (event) => {
 })
 
 app.mount('#app')
+
+// 申请持久化存储（PWA 离线数据不被浏览器自动清理）
+if ('storage' in navigator && 'persist' in navigator.storage) {
+  navigator.storage.persist().then((persisted) => {
+    if (persisted) {
+      console.log('[PWA] 持久化存储已启用')
+    }
+  }).catch(() => {
+    // 静默失败，不影响应用启动
+  })
+}
