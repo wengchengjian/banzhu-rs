@@ -1,4 +1,5 @@
 use super::*;
+use crate::error::{AppError, AppResult};
 use crate::web::ApiResponse;
 use crate::search::SearchField;
 
@@ -7,10 +8,10 @@ use crate::search::SearchField;
 pub(crate) async fn search(
     State(state): State<Arc<AppState>>,
     Query(params): Query<SearchQuery>,
-) -> Json<ApiResponse<Value>> {
+) -> AppResult<Json<ApiResponse<Value>>> {
     let keyword = match params.q.as_ref().map(|s| s.trim()) {
         Some(k) if !k.is_empty() => k,
-        _ => return err_response("缺少搜索关键词 q"),
+        _ => return Err(AppError::BadRequest("缺少搜索关键词 q".into())),
     };
 
     let page = params.page.unwrap_or(1).max(1);
@@ -27,15 +28,8 @@ pub(crate) async fn search(
 
     let db = state.db.lock().await;
 
-    let total = match db.search_fts_count(keyword, exact) {
-        Ok(t) => t,
-        Err(e) => return err_response(&format!("搜索失败: {}", e)),
-    };
-
-    let results = match db.search_fts(keyword, exact, search_field, limit, offset) {
-        Ok(r) => r,
-        Err(e) => return err_response(&format!("搜索失败: {}", e)),
-    };
+    let total = db.search_fts_count(keyword, exact)?;
+    let results = db.search_fts(keyword, exact, search_field, limit, offset)?;
 
     let items: Vec<Value> = results
         .into_iter()
@@ -57,10 +51,10 @@ pub(crate) async fn search(
         })
         .collect();
 
-    ok_response(json!({
+    Ok(ok_response(json!({
         "total": total,
         "page": page,
         "limit": limit,
         "items": items,
-    }))
+    })))
 }

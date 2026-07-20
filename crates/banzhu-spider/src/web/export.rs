@@ -1,5 +1,6 @@
 use super::*;
 use crate::db::{BookRecord, ChapterRecord, SectionRecord};
+use crate::error::{AppError, AppResult};
 use axum::body::Body;
 use axum::http::header;
 use axum::response::{IntoResponse, Response};
@@ -18,61 +19,35 @@ pub(crate) async fn export_book(
     State(state): State<Arc<AppState>>,
     Path(book_id): Path<i64>,
     Query(q): Query<ExportQuery>,
-) -> Response {
+) -> AppResult<Response> {
     let format = q.format.unwrap_or_else(|| "txt".to_string()).to_lowercase();
 
     // 在持锁期间取出所需数据，尽快释放锁
     let (book, chapters, sections) = {
         let db = state.db.lock().await;
 
-        let book = match db.get_book(book_id) {
-            Ok(Some(b)) => b,
-            Ok(None) => {
-                return error_response(StatusCode::NOT_FOUND, "书籍不存在");
-            }
-            Err(e) => {
-                return error_response(
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    &format!("查询失败: {}", e),
-                );
-            }
-        };
-
-        let chapters = match db.get_chapters_by_book(book_id) {
-            Ok(c) => c,
-            Err(e) => {
-                return error_response(
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    &format!("查询失败: {}", e),
-                );
-            }
-        };
-
-        let sections = match db.get_sections_by_book(book_id) {
-            Ok(s) => s,
-            Err(e) => {
-                return error_response(
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    &format!("查询失败: {}", e),
-                );
-            }
-        };
+        let book = db.get_book(book_id)?.ok_or(AppError::NotFound)?;
+        let chapters = db.get_chapters_by_book(book_id)?;
+        let sections = db.get_sections_by_book(book_id)?;
 
         (book, chapters, sections)
     };
 
     if chapters.is_empty() {
-        return error_response(StatusCode::NOT_FOUND, "该书暂无章节内容");
+        return Err(AppError::NotFound);
     }
 
-    match format.as_str() {
+    let response = match format.as_str() {
         "txt" => export_txt(book, chapters, sections),
         "epub" => export_epub(book, chapters, sections),
-        other => error_response(
-            StatusCode::BAD_REQUEST,
-            &format!("不支持的导出格式: {}（可选 txt / epub）", other),
-        ),
-    }
+        other => {
+            return Err(AppError::BadRequest(format!(
+                "不支持的导出格式: {}（可选 txt / epub）",
+                other
+            )));
+        }
+    };
+    Ok(response)
 }
 
 /// 按章节聚合 section 文本，返回 (章节标题, 章节正文) 列表，保持 chapter_order 顺序
