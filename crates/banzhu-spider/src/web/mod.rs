@@ -5,13 +5,15 @@ use crate::scheduler::Scheduler;
 use axum::{
     body::Body,
     extract::{Path, Query, State},
-    http::{Request, StatusCode},
+    http::{header, Request, StatusCode, Uri},
     middleware::{self, Next},
-    response::{Json, Response},
+    response::{IntoResponse, Json, Response},
     routing::{get, post, put},
     Router,
 };
+#[allow(unused_imports)]
 use tower_http::services::{ServeDir, ServeFile};
+use rust_embed::RustEmbed;
 use config::Config;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -26,7 +28,10 @@ mod search;
 mod shelf;
 
 use books::{book_chapters, book_detail, categories, chapter_content, delete_book, list_books, stats};
-use crawl::{crawl_logs, crawl_manual, crawl_schedule, crawl_status, crawl_trigger, update_crawl_schedule};
+use crawl::{
+    crawl_logs, crawl_manual, crawl_retry, crawl_schedule, crawl_status, crawl_tasks,
+    crawl_trigger, update_crawl_schedule,
+};
 use export::export_book;
 use search::search;
 use shelf::{
@@ -115,6 +120,35 @@ pub(crate) struct SearchQuery {
     pub(crate) exact: Option<bool>,
 }
 
+// ─── 前端静态资源（rust-embed） ───────────────────────────────────────────────
+
+#[derive(RustEmbed)]
+#[folder = "frontend/dist/"]
+struct FrontendAsset;
+
+pub async fn static_handler(uri: Uri) -> Response {
+    let path = uri.path().trim_start_matches('/');
+    let path = if path.is_empty() { "index.html" } else { path };
+
+    if let Some(file) = FrontendAsset::get(path) {
+        return file_response(path, file);
+    }
+    // SPA fallback
+    if let Some(file) = FrontendAsset::get("index.html") {
+        return file_response("index.html", file);
+    }
+    (StatusCode::NOT_FOUND, "Not Found").into_response()
+}
+
+fn file_response(path: &str, file: rust_embed::EmbeddedFile) -> Response {
+    let mime = mime_guess::from_path(path).first_or_octet_stream();
+    (
+        StatusCode::OK,
+        [(header::CONTENT_TYPE, mime.as_ref())],
+        Body::from(file.data.into_owned()),
+    ).into_response()
+}
+
 // ─── Startup ─────────────────────────────────────────────────────────────────
 
 pub async fn run_web() -> anyhow::Result<()> {
@@ -180,15 +214,14 @@ pub async fn run_web() -> anyhow::Result<()> {
         .route("/api/crawl/schedule", get(crawl_schedule).put(update_crawl_schedule))
         .route("/api/crawl/manual", post(crawl_manual))
         .route("/api/crawl/logs", get(crawl_logs))
+        .route("/api/crawl/tasks", get(crawl_tasks))
+        .route("/api/crawl/retry/{bookId}", post(crawl_retry))
         // API 404
         .route("/api/{*path}", get(|| async {
             ApiResponse::<serde_json::Value>::err("接口不存在")
         }))
-        // 静态文件 + SPA fallback (非文件路由返回 index.html)
-        .fallback_service(
-            ServeDir::new(concat!(env!("CARGO_MANIFEST_DIR"), "/static"))
-                .not_found_service(ServeFile::new(concat!(env!("CARGO_MANIFEST_DIR"), "/static/index.html")))
-        )
+        // 静态文件 + SPA fallback (rust-embed 嵌入 frontend/dist/)
+        .fallback(crate::web::static_handler)
         // 请求日志
         .layer(middleware::from_fn(log_request))
         .with_state(state);

@@ -43,3 +43,5 @@ sqlite-simple-tokenizer = "0.5"
 toml = "0.8"
 tokio-cron-scheduler = "0.13"
 zip = "2"
+rust-embed = { version = "8", features = ["axum"] }
+mime_guess = "2"
