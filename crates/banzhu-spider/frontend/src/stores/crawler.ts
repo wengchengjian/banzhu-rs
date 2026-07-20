@@ -42,7 +42,8 @@ export const useCrawlerStore = defineStore('crawler', () => {
   })
 
   function patchStatus(s: CrawlStatus) {
-    status.value = s
+    // 合并而非覆盖：SSE status 事件不携带 last_run，避免丢失 REST 拉取的 last_run
+    status.value = { ...status.value, ...s }
   }
 
   function setTasks(items: CrawlTask[]) {
