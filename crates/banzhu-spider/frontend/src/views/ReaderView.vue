@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
+import { ref, computed, onMounted, onUnmounted, watch, nextTick } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { booksApi } from '@/api/books'
 import { progressApi } from '@/api/progress'
@@ -56,6 +56,7 @@ const displayContent = computed(() => {
 const showFooter = computed(
   () =>
     reader.settings.mode === 'paginate' &&
+    isPaginated.value &&
     !initialLoading.value &&
     !errorMsg.value &&
     chapter.value !== null,
@@ -121,6 +122,9 @@ async function loadChapter(order: number) {
     if (chapterList) chapters.value = chapterList.items
     // 切换章节时清空旧错误，避免误显示上一章的错误
     errorMsg.value = ''
+    // 重置滚动位置到顶部，避免新章节停留在旧章节的滚动位置
+    await nextTick()
+    if (contentRef.value) contentRef.value.scrollTo(0, 0)
     await updateProgress(order)
   } catch (e) {
     errorMsg.value = (e as Error).message

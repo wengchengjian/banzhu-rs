@@ -23,7 +23,11 @@ export function usePagination(
   })
 
   const totalPages = computed(() => pages.value.length)
-  const currentContent = computed(() => pages.value[currentPage.value] ?? '')
+  const currentContent = computed(() => {
+    // clamp currentPage 到有效范围，防止 resize 跨断点后越界返回空字符串
+    const idx = Math.min(currentPage.value, Math.max(0, totalPages.value - 1))
+    return pages.value[idx] ?? ''
+  })
 
   function next(): boolean {
     if (currentPage.value < totalPages.value - 1) {
