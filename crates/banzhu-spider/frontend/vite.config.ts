@@ -22,14 +22,27 @@ export default defineConfig({
       },
       workbox: {
         runtimeCaching: [
+          // 章节内容：NetworkFirst，缓存到 chapters-cache
           {
             urlPattern: /\/api\/books\/\d+\/chapters\/\d+$/,
             handler: 'NetworkFirst',
             options: {
               cacheName: 'chapters-cache',
-              expiration: { maxEntries: 1000 },
+              expiration: { maxEntries: 5000 }, // 永久缓存，限制上限防止失控
+              networkTimeoutSeconds: 10, // 修复 Task 22 I3：弱网 10s 超时回退缓存
             },
           },
+          // 书籍详情：NetworkFirst，容错
+          {
+            urlPattern: /\/api\/books\/\d+$/,
+            handler: 'NetworkFirst',
+            options: {
+              cacheName: 'books-cache',
+              expiration: { maxEntries: 200 },
+            },
+          },
+          // 爬虫/统计：NetworkOnly（不缓存）
+          // 其他 API：默认不缓存
         ],
       },
     }),

@@ -6,6 +6,7 @@ import { progressApi } from '@/api/progress'
 import { useReaderStore, type ReaderTheme } from '@/stores/reader'
 import { useReadingSessionStore } from '@/stores/readingSession'
 import { usePagination } from '@/composables/usePagination'
+import { useChapterPrefetch } from '@/composables/useChapterPrefetch'
 import LoadingSpinner from '@/components/LoadingSpinner.vue'
 import EmptyState from '@/components/EmptyState.vue'
 import ChapterList from '@/components/ChapterList.vue'
@@ -49,6 +50,8 @@ const {
   () => chapter.value?.content ?? '',
   () => containerWidth.value,
 )
+
+const { prefetch } = useChapterPrefetch()
 
 // 滚动模式直接展示整章；分页模式展示当前页内容
 const displayContent = computed(() => {
@@ -112,6 +115,8 @@ async function loadChapter(order: number) {
     await nextTick()
     if (contentRef.value) contentRef.value.scrollTo(0, 0)
     await updateProgress(order)
+    // 预加载下一 3 章
+    prefetch(bookId.value, order, 3)
   } catch (e) {
     errorMsg.value = (e as Error).message
   }
