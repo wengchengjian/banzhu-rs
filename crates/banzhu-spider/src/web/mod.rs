@@ -26,8 +26,9 @@ mod crawl;
 mod export;
 mod search;
 mod shelf;
+mod stats;
 
-use books::{book_chapters, book_detail, categories, chapter_content, delete_book, list_books, stats};
+use books::{book_chapters, book_detail, categories, chapter_content, delete_book, list_books, stats as books_stats};
 use crawl::{
     crawl_logs, crawl_manual, crawl_schedule, crawl_status, crawl_stream, crawl_tasks,
     crawl_trigger, delete_tasks, retry_failed, update_crawl_schedule,
@@ -206,7 +207,14 @@ pub async fn run_web() -> anyhow::Result<()> {
         .route("/api/search", get(search))
         // 分类 & 统计
         .route("/api/categories", get(categories))
-        .route("/api/stats", get(stats))
+        .route("/api/stats", get(books_stats))
+        // 阅读统计
+        .route("/api/stats/heatmap", get(stats::heatmap))
+        .route("/api/stats/reading-timeline", get(stats::reading_timeline))
+        .route("/api/stats/reading-session", post(stats::report_session))
+        .route("/api/stats/reading-goal", get(stats::get_reading_goal).put(stats::update_reading_goal))
+        .route("/api/stats/today", get(stats::today_reading))
+        .route("/api/stats/reading-history", get(stats::reading_history))
         // 书架 & 阅读进度
         .route("/api/bookshelf", get(get_bookshelf).post(add_to_bookshelf))
         .route(
