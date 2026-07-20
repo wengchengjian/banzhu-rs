@@ -119,6 +119,7 @@ pub(crate) struct SearchQuery {
 
 pub async fn run_web() -> anyhow::Result<()> {
     let db = Arc::new(Mutex::new(appconfig::open_db()?));
+    log::info!("数据库已连接: {}", appconfig::get_db_path().unwrap_or_default());
 
     let config_path = "spider.toml";
     let config = Config::builder()
@@ -129,6 +130,11 @@ pub async fn run_web() -> anyhow::Result<()> {
     let root_url = config
         .get_string("root_url")
         .unwrap_or_else(|_| "https://www.bz11111111.com/".to_string());
+    log::info!("目标站点: {}", root_url);
+    log::info!("定时爬取: enabled={}, schedule={}", 
+        config.get_bool("cron.enabled").unwrap_or(true),
+        config.get_string("cron.schedule").unwrap_or_else(|_| "0 */6 * * *".into()));
+
     let spider = Arc::new(BanzhuSpider::new(root_url, config.clone()));
 
     let scheduler = Arc::new(Scheduler::new(spider, db.clone(), config.clone()));

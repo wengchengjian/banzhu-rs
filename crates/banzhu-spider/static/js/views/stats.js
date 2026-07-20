@@ -19,7 +19,8 @@ Views.stats = async function(app) {
       API.get('/categories').catch(function() { return []; }),
     ]);
     stats = results[0];
-    categories = results[1] || [];
+    var catsData = results[1];
+    categories = Array.isArray(catsData) ? catsData : (catsData && catsData.categories) || [];
   } catch (e) {
     document.getElementById('statsContent').innerHTML = '<p class="empty">加载失败: ' + escapeHtml(e.message) + '</p>';
     return;
