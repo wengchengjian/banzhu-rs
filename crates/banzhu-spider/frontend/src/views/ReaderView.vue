@@ -4,6 +4,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { booksApi } from '@/api/books'
 import { progressApi } from '@/api/progress'
 import { useReaderStore, type ReaderTheme } from '@/stores/reader'
+import { useReadingSessionStore } from '@/stores/readingSession'
 import { usePagination } from '@/composables/usePagination'
 import LoadingSpinner from '@/components/LoadingSpinner.vue'
 import EmptyState from '@/components/EmptyState.vue'
@@ -14,6 +15,7 @@ import type { ChapterContent, ChapterListItem } from '@/types/books'
 const route = useRoute()
 const router = useRouter()
 const reader = useReaderStore()
+const session = useReadingSessionStore()
 
 const bookId = computed(() => Number(route.params.bookId))
 const chapterOrder = computed(() => Number(route.params.chapterOrder))
@@ -155,16 +157,21 @@ onMounted(async () => {
   updateContainerWidth()
   window.addEventListener('resize', updateContainerWidth)
   window.addEventListener('keydown', onKeydown)
+  session.start(bookId.value, chapterOrder.value)
 })
 
 onUnmounted(() => {
+  session.stop()
   window.removeEventListener('resize', updateContainerWidth)
   window.removeEventListener('keydown', onKeydown)
 })
 
 // 监听 route.params.chapterOrder 变化重新加载
 watch(chapterOrder, (newOrder) => {
-  if (newOrder) loadChapter(newOrder)
+  if (newOrder) {
+    loadChapter(newOrder)
+    session.start(bookId.value, newOrder)
+  }
 })
 </script>
 
