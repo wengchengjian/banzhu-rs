@@ -17,7 +17,9 @@ export interface TodayReading {
 }
 export interface ReadingHistoryItem {
   book_id: number
+  book_title: string
   last_read_at: number
+  last_chapter_order: number
   total_duration_sec: number
   total_chapters: number
 }
@@ -29,18 +31,22 @@ export interface ReportSessionBody {
   started_at: number
   ended_at: number
 }
+export interface ReportSessionResult {
+  ok: boolean
+  session_id: number
+}
 
 export const statsApi = {
   heatmap: (year?: number) =>
-    client.get<HeatmapPoint[]>(`/api/stats/heatmap${year ? `?year=${year}` : ''}`),
+    client.get<{ items: HeatmapPoint[] }>(`/api/stats/heatmap${year ? `?year=${year}` : ''}`),
   timeline: (days?: number) =>
-    client.get<TimelinePoint[]>(`/api/stats/reading-timeline${days ? `?days=${days}` : ''}`),
+    client.get<{ items: TimelinePoint[] }>(`/api/stats/reading-timeline${days ? `?days=${days}` : ''}`),
   reportSession: (data: ReportSessionBody) =>
-    client.post<{ ok: boolean }>('/api/stats/reading-session', data),
+    client.post<ReportSessionResult>('/api/stats/reading-session', data),
   getGoal: () => client.get<ReadingGoalRecord>('/api/stats/reading-goal'),
   updateGoal: (daily_minutes: number, daily_chapters: number) =>
     client.put<ReadingGoalRecord>('/api/stats/reading-goal', { daily_minutes, daily_chapters }),
   today: () => client.get<TodayReading>('/api/stats/today'),
   history: (limit = 20) =>
-    client.get<ReadingHistoryItem[]>(`/api/stats/reading-history?limit=${limit}`),
+    client.get<{ items: ReadingHistoryItem[] }>(`/api/stats/reading-history?limit=${limit}`),
 }

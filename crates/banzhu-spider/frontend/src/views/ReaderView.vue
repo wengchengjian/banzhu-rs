@@ -130,6 +130,7 @@ function prevChapter() {
 
 function nextChapter() {
   if (chapter.value?.next_order) {
+    session.markChapterRead()
     goToChapter(chapter.value.next_order)
   }
 }

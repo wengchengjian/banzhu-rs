@@ -27,14 +27,15 @@ export const useReadingSessionStore = defineStore('readingSession', () => {
       started_at: startedAt.value,
       ended_at: Math.floor(Date.now() / 1000),
     }
+    // 立即重置状态，避免与 start 的新会话累加冲突
+    durationSec.value = 0
+    chaptersRead.value = 0
+    startedAt.value = Math.floor(Date.now() / 1000)
     try {
       await statsApi.reportSession(body)
     } catch (e) {
       console.warn('上报阅读会话失败', e)
     }
-    durationSec.value = 0
-    chaptersRead.value = 0
-    startedAt.value = Math.floor(Date.now() / 1000)
   }
 
   function flushBeacon() {
@@ -51,6 +52,7 @@ export const useReadingSessionStore = defineStore('readingSession', () => {
     navigator.sendBeacon('/api/stats/reading-session', blob)
     durationSec.value = 0
     chaptersRead.value = 0
+    startedAt.value = Math.floor(Date.now() / 1000)
   }
 
   function start(bid: number, order: number) {
