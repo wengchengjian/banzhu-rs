@@ -3,4 +3,4 @@
 /**
  * 单本书的爬取任务状态记录
  */
-export type CrawlTaskRecord = { id: bigint, website_book_id: bigint, book_id: bigint | null, title: string, status: string, progress: bigint, chapters_total: bigint, chapters_done: bigint, error_message: string, trigger: string, started_at: bigint | null, finished_at: bigint | null, created_at: bigint, updated_at: bigint, };
+export type CrawlTaskRecord = { id: number, website_book_id: number, book_id: number | null, title: string, status: string, progress: number, chapters_total: number, chapters_done: number, error_message: string, trigger: string, started_at: number | null, finished_at: number | null, created_at: number, updated_at: number, };
