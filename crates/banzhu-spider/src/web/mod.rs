@@ -28,10 +28,7 @@ mod search;
 mod shelf;
 
 use books::{book_chapters, book_detail, categories, chapter_content, delete_book, list_books, stats};
-use crawl::{
-    crawl_logs, crawl_manual, crawl_retry, crawl_schedule, crawl_status, crawl_tasks,
-    crawl_trigger, update_crawl_schedule,
-};
+use crawl::{crawl_logs, crawl_manual, crawl_schedule, crawl_status, crawl_trigger, update_crawl_schedule};
 use export::export_book;
 use search::search;
 use shelf::{
@@ -214,8 +211,6 @@ pub async fn run_web() -> anyhow::Result<()> {
         .route("/api/crawl/schedule", get(crawl_schedule).put(update_crawl_schedule))
         .route("/api/crawl/manual", post(crawl_manual))
         .route("/api/crawl/logs", get(crawl_logs))
-        .route("/api/crawl/tasks", get(crawl_tasks))
-        .route("/api/crawl/retry/{bookId}", post(crawl_retry))
         // API 404
         .route("/api/{*path}", get(|| async {
             ApiResponse::<serde_json::Value>::err("接口不存在")
