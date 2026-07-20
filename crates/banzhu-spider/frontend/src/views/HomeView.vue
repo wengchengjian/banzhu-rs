@@ -18,12 +18,16 @@ const errorMsg = ref('')
 
 const { sentinel, loading, hasMore, reset, check } = useInfiniteScroll({
   loadMore: async () => {
+    // 捕获发起请求时的分类，await 返回后用于检测是否已过期
+    const requestCategory = selectedCategory.value
     try {
       const result = await booksApi.list({
         page: page.value,
         limit: pageSize,
-        category: selectedCategory.value || undefined,
+        category: requestCategory || undefined,
       })
+      // 期间切换了分类，丢弃过期结果，避免旧分类书籍追加到新分类
+      if (selectedCategory.value !== requestCategory) return
       if (result.items.length === 0) {
         return false
       }
@@ -34,6 +38,8 @@ const { sentinel, loading, hasMore, reset, check } = useInfiniteScroll({
         return false
       }
     } catch (e) {
+      // 期间切换了分类，错误也已无关
+      if (selectedCategory.value !== requestCategory) return
       errorMsg.value = (e as Error).message
       return false
     }
