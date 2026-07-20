@@ -11,7 +11,7 @@ use axum::{
     routing::{get, post, put},
     Router,
 };
-use tower_http::services::ServeDir;
+use tower_http::services::{ServeDir, ServeFile};
 use config::Config;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -174,8 +174,15 @@ pub async fn run_web() -> anyhow::Result<()> {
         .route("/api/crawl/schedule", get(crawl_schedule).put(update_crawl_schedule))
         .route("/api/crawl/manual", post(crawl_manual))
         .route("/api/crawl/logs", get(crawl_logs))
-        // 静态文件服务 (SPA fallback)
-        .fallback_service(ServeDir::new("static"))
+        // API 404
+        .route("/api/{*path}", get(|| async {
+            ApiResponse::<serde_json::Value>::err("接口不存在")
+        }))
+        // 静态文件 + SPA fallback (非文件路由返回 index.html)
+        .fallback_service(
+            ServeDir::new(concat!(env!("CARGO_MANIFEST_DIR"), "/static"))
+                .not_found_service(ServeFile::new(concat!(env!("CARGO_MANIFEST_DIR"), "/static/index.html")))
+        )
         // 请求日志
         .layer(middleware::from_fn(log_request))
         .with_state(state);
