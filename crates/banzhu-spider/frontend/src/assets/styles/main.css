@@ -1,0 +1,8 @@
+@import 'tailwindcss';
+:root { color-scheme: light dark; }
+body {
+  margin: 0;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+html.dark body { background-color: #0d1117; color: #c9d1d9; }

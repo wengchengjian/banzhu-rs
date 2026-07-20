@@ -1,10 +1,33 @@
+# 构建产物
 /target
-node_modules
-book
-agent.json
-.vscode
-.idea
-download_ids.txt
-exclude_ids.txt
+**/target
+
+# 运行时数据
+banzhu.db
+book/
 *.log
 agent.json
+browsers.json
+
+# 诊断/测试产物
+cf_page.html
+cf_diag.log
+test.txt
+screenshot.jpg
+
+# 依赖
+node_modules/
+
+# IDE
+.vscode/
+.idea/
+.codegraph/
+
+# 临时文件
+download_ids.txt
+exclude_ids.txt
+package-lock.json
+
+# 前端工程
+crates/banzhu-spider/frontend/node_modules/
+crates/banzhu-spider/frontend/dist/
