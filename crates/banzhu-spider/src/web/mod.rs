@@ -11,8 +11,6 @@ use axum::{
     routing::{get, post, put},
     Router,
 };
-#[allow(unused_imports)]
-use tower_http::services::{ServeDir, ServeFile};
 use rust_embed::RustEmbed;
 use config::Config;
 use serde::{Deserialize, Serialize};
