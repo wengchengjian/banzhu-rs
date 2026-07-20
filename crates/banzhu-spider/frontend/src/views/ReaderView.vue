@@ -3,11 +3,12 @@ import { ref, computed, onMounted, onUnmounted, watch, nextTick } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { booksApi } from '@/api/books'
 import { progressApi } from '@/api/progress'
-import { useReaderStore, type ReaderTheme, type PageMode } from '@/stores/reader'
+import { useReaderStore, type ReaderTheme } from '@/stores/reader'
 import { usePagination } from '@/composables/usePagination'
 import LoadingSpinner from '@/components/LoadingSpinner.vue'
 import EmptyState from '@/components/EmptyState.vue'
 import ChapterList from '@/components/ChapterList.vue'
+import ReaderSettings from '@/components/ReaderSettings.vue'
 import type { ChapterContent, ChapterListItem } from '@/types/books'
 
 const route = useRoute()
@@ -81,23 +82,6 @@ const contentStyles = computed(() => ({
   fontSize: `${reader.settings.fontSize}px`,
   lineHeight: reader.settings.lineHeight,
 }))
-
-const themeLabels: Record<ReaderTheme, string> = {
-  paper: '纸张',
-  sepia: '护眼',
-  white: '白色',
-  dark: '夜间',
-}
-
-const modeLabels: Record<PageMode, string> = {
-  scroll: '滚动',
-  paginate: '翻页',
-}
-
-const fontSizes = [14, 16, 18, 20, 22, 24]
-const lineHeights = [1.5, 1.8, 2.0, 2.5]
-const themes: ReaderTheme[] = ['paper', 'sepia', 'white', 'dark']
-const modes: PageMode[] = ['scroll', 'paginate']
 
 async function updateProgress(chapterOrderValue: number) {
   try {
@@ -296,120 +280,10 @@ watch(chapterOrder, (newOrder) => {
       </div>
     </Teleport>
 
-    <!-- 设置面板（内联简化版，Task 14 将抽取为 ReaderSettings 组件） -->
-    <Teleport to="body">
-      <div v-if="settingsPanel" class="fixed inset-0 z-30">
-        <div
-          class="absolute inset-0 bg-black/40"
-          @click="settingsPanel = false"
-        />
-        <aside
-          class="absolute right-0 top-0 h-full w-80 max-w-[80%] overflow-y-auto bg-white text-gray-900 shadow-xl"
-        >
-          <div
-            class="flex items-center justify-between border-b border-gray-200 px-4 py-3"
-          >
-            <h2 class="text-base font-medium">阅读设置</h2>
-            <button
-              type="button"
-              aria-label="关闭"
-              class="flex h-8 w-8 items-center justify-center rounded text-2xl leading-none hover:bg-gray-100"
-              @click="settingsPanel = false"
-            >
-              ×
-            </button>
-          </div>
-          <div class="space-y-5 p-4">
-            <!-- 字号 -->
-            <div>
-              <div class="mb-2 text-sm text-gray-600">字号</div>
-              <div class="flex flex-wrap gap-2">
-                <button
-                  v-for="size in fontSizes"
-                  :key="size"
-                  type="button"
-                  class="rounded px-3 py-1 text-sm transition"
-                  :class="
-                    reader.settings.fontSize === size
-                      ? 'bg-blue-600 text-white'
-                      : 'border border-gray-300 hover:bg-gray-50'
-                  "
-                  @click="reader.update({ fontSize: size })"
-                >
-                  {{ size }}
-                </button>
-              </div>
-            </div>
-            <!-- 行距 -->
-            <div>
-              <div class="mb-2 text-sm text-gray-600">行距</div>
-              <div class="flex flex-wrap gap-2">
-                <button
-                  v-for="lh in lineHeights"
-                  :key="lh"
-                  type="button"
-                  class="rounded px-3 py-1 text-sm transition"
-                  :class="
-                    reader.settings.lineHeight === lh
-                      ? 'bg-blue-600 text-white'
-                      : 'border border-gray-300 hover:bg-gray-50'
-                  "
-                  @click="reader.update({ lineHeight: lh })"
-                >
-                  {{ lh }}
-                </button>
-              </div>
-            </div>
-            <!-- 主题 -->
-            <div>
-              <div class="mb-2 text-sm text-gray-600">主题</div>
-              <div class="flex flex-wrap gap-2">
-                <button
-                  v-for="t in themes"
-                  :key="t"
-                  type="button"
-                  class="rounded px-3 py-1 text-sm transition"
-                  :class="
-                    reader.settings.theme === t
-                      ? 'bg-blue-600 text-white'
-                      : 'border border-gray-300 hover:bg-gray-50'
-                  "
-                  @click="reader.update({ theme: t })"
-                >
-                  {{ themeLabels[t] }}
-                </button>
-              </div>
-            </div>
-            <!-- 翻页方式 -->
-            <div>
-              <div class="mb-2 text-sm text-gray-600">翻页方式</div>
-              <div class="flex flex-wrap gap-2">
-                <button
-                  v-for="m in modes"
-                  :key="m"
-                  type="button"
-                  class="rounded px-3 py-1 text-sm transition"
-                  :class="
-                    reader.settings.mode === m
-                      ? 'bg-blue-600 text-white'
-                      : 'border border-gray-300 hover:bg-gray-50'
-                  "
-                  @click="reader.update({ mode: m })"
-                >
-                  {{ modeLabels[m] }}
-                </button>
-              </div>
-            </div>
-            <button
-              type="button"
-              class="w-full rounded bg-blue-600 px-4 py-2 text-white transition hover:bg-blue-700"
-              @click="settingsPanel = false"
-            >
-              完成
-            </button>
-          </div>
-        </aside>
-      </div>
-    </Teleport>
+    <!-- 设置面板 -->
+    <ReaderSettings
+      :visible="settingsPanel"
+      @close="settingsPanel = false"
+    />
   </div>
 </template>
