@@ -64,10 +64,6 @@ pub(crate) fn ok_response(data: Value) -> Json<ApiResponse<Value>> {
     ApiResponse::ok(data)
 }
 
-pub(crate) fn err_response(msg: &str) -> Json<ApiResponse<Value>> {
-    ApiResponse::err(msg)
-}
-
 // ─── 请求日志中间件 ───────────────────────────────────────────────────────────
 
 async fn log_request(req: Request<Body>, next: Next) -> Response {
