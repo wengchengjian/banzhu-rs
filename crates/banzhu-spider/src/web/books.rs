@@ -84,6 +84,23 @@ pub(crate) async fn book_detail(
     }
 }
 
+// DELETE /api/books/:id
+pub(crate) async fn delete_book(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<i64>,
+) -> Json<ApiResponse<Value>> {
+    let db = state.db.lock().await;
+
+    match db.get_book(id) {
+        Ok(Some(_)) => match db.delete_book(id) {
+            Ok(()) => ok_response(json!({ "deleted": id })),
+            Err(e) => err_response(&format!("删除失败: {}", e)),
+        },
+        Ok(None) => err_response("书籍不存在"),
+        Err(e) => err_response(&format!("查询失败: {}", e)),
+    }
+}
+
 pub(crate) async fn book_chapters(
     State(state): State<Arc<AppState>>,
     Path(id): Path<i64>,

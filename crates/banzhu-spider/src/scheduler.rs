@@ -240,4 +240,124 @@ impl Scheduler {
 
         Ok(())
     }
+
+    /// 手动下载单本书（按网站 book_id），并写入爬取日志
+    pub async fn crawl_book(&self, website_book_id: u32) -> Result<()> {
+        let db = self.db.lock().await;
+        let exists = db
+            .book_exists_by_website_id(website_book_id as i64)
+            .unwrap_or(false);
+        let existing_chapters = if exists {
+            db.get_chapters_count_by_website_id(website_book_id as i64)
+                .unwrap_or(0)
+        } else {
+            0
+        };
+        drop(db);
+
+        let _ = self.db.lock().await.insert_crawl_log(
+            "INFO",
+            &format!("手动爬取开始: book_id={}", website_book_id),
+        );
+
+        let task = self.spider.create_download_task(website_book_id);
+
+        let result = if exists && existing_chapters > 0 {
+            info!(
+                "手动增量更新: book_id={} (已有{}章)",
+                website_book_id, existing_chapters
+            );
+            task.download_incremental(existing_chapters).await
+        } else {
+            info!("手动新书下载: book_id={}", website_book_id);
+            task.download().await
+        };
+
+        let (book, chapters) = match result {
+            Ok(pair) => pair,
+            Err(e) => {
+                let _ = self.db.lock().await.insert_crawl_log(
+                    "ERROR",
+                    &format!("手动爬取失败 book_id={}: {}", website_book_id, e),
+                );
+                return Err(e);
+            }
+        };
+
+        let book_record = crate::db::BookRecord {
+            id: 0,
+            website_book_id: Some(website_book_id as i64),
+            path_num: book.num as i64,
+            title: book.title.clone(),
+            filename: book.filename.clone(),
+            author: book.author.clone(),
+            category: book.category.clone(),
+            introduce: book.introduce.clone(),
+            likes: book.likes as i64,
+            word_count: book.count as i64,
+            page_count: book.page as i64,
+            created_at: chrono::Utc::now().timestamp(),
+            updated_at: chrono::Utc::now().timestamp(),
+        };
+
+        let chapter_records: Vec<_> = chapters
+            .iter()
+            .enumerate()
+            .map(|(i, ch)| {
+                let sections = ch
+                    .sections
+                    .as_ref()
+                    .map(|s| {
+                        s.iter()
+                            .enumerate()
+                            .map(|(j, sec)| crate::db::SectionRecord {
+                                id: 0,
+                                chapter_id: 0,
+                                book_id: 0,
+                                url: sec.url.clone(),
+                                content: sec.content.clone().unwrap_or_default(),
+                                section_order: (j + 1) as i64,
+                            })
+                            .collect::<Vec<_>>()
+                    })
+                    .unwrap_or_default();
+                (
+                    crate::db::ChapterRecord {
+                        id: 0,
+                        book_id: 0,
+                        title: ch.title.clone(),
+                        url: ch.url.clone(),
+                        chapter_order: (i + 1) as i64,
+                        word_count: 0,
+                    },
+                    sections,
+                )
+            })
+            .collect();
+
+        let db = self.db.lock().await;
+        match db.save_book_with_chapters(&book_record, &chapter_records) {
+            Ok(_) => {
+                let _ = db.insert_crawl_log(
+                    "INFO",
+                    &format!(
+                        "手动爬取成功: {} (book_id={}, {}章)",
+                        book.title,
+                        website_book_id,
+                        chapter_records.len()
+                    ),
+                );
+                info!("手动爬取成功: {} (book_id={})", book.title, website_book_id);
+            }
+            Err(e) => {
+                let _ = db.insert_crawl_log(
+                    "ERROR",
+                    &format!("手动爬取保存失败 {}: {}", book.title, e),
+                );
+                return Err(e);
+            }
+        }
+
+        Ok(())
+    }
 }
