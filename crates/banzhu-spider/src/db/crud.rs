@@ -491,12 +491,15 @@ impl Database {
                 "SELECT id, book_id, chapter_order, page_index, updated_at FROM reading_progress WHERE book_id = ?1",
                 params![book_id],
                 |row| {
+                    let updated_at: i64 = row.get(4)?;
                     Ok(ReadingProgressRecord {
                         id: row.get(0)?,
                         book_id: row.get(1)?,
                         chapter_order: row.get(2)?,
                         page_index: row.get(3)?,
-                        updated_at: row.get(4)?,
+                        // Task 6 will ALTER TABLE to add last_read_at column; reuse updated_at for now
+                        last_read_at: updated_at,
+                        updated_at,
                     })
                 },
             )
