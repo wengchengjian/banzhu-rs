@@ -1,7 +1,14 @@
 use super::*;
 use crate::error::{AppError, AppResult};
+use crate::event::CrawlEvent;
 use crate::web::ApiResponse;
+use axum::http::HeaderMap;
+use axum::response::sse::{Event, KeepAlive, Sse};
+use futures::stream::Stream;
 use serde::Deserialize;
+use std::convert::Infallible;
+use tokio_stream::wrappers::BroadcastStream;
+use tokio_stream::StreamExt as TokioStreamExt;
 
 // ─── Crawl tasks query ──────────────────────────────────────────────────────
 
@@ -206,4 +213,142 @@ pub(crate) async fn crawl_logs(
     let db = state.db.lock().await;
     let logs = db.get_crawl_logs(limit)?;
     Ok(ApiResponse::ok(logs))
+}
+
+// ─── SSE stream & batch endpoints ────────────────────────────────────────────
+
+/// GET /api/crawl/stream — SSE 流式推送爬虫事件
+///
+/// 客户端重连时通过 `Last-Event-ID` 头携带最后接收的日志 ID，
+/// 服务端补发 id > last_log_id 的日志事件。
+pub(crate) async fn crawl_stream(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+) -> Sse<impl Stream<Item = Result<Event, Infallible>>> {
+    let last_log_id: i64 = headers
+        .get("Last-Event-ID")
+        .and_then(|v| v.to_str().ok())
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(0);
+
+    // 补发遗漏的日志事件
+    let missed_logs = {
+        let db = state.db.lock().await;
+        db.list_logs_after(last_log_id, 200).unwrap_or_default()
+    };
+
+    // 重连后立即重发 task:full（任务全量快照）
+    let initial_tasks = {
+        let db = state.db.lock().await;
+        db.list_crawl_tasks(None, 1000, 0).unwrap_or_default()
+    };
+
+    let rx = state.event_bus.tx.subscribe();
+
+    // 先推送补发的日志和任务全量，再订阅实时事件
+    let initial_events = missed_logs
+        .into_iter()
+        .map(|log| {
+            let json = serde_json::to_string(&CrawlEvent::Log {
+                id: log.id,
+                level: log.level,
+                message: log.message,
+                timestamp: log.created_at,
+            })
+            .unwrap_or_default();
+            Ok::<_, Infallible>(
+                Event::default()
+                    .event("log")
+                    .id(log.id.to_string())
+                    .data(json),
+            )
+        })
+        .chain(std::iter::once({
+            let tasks_json = serde_json::to_string(&CrawlEvent::TaskFull {
+                tasks: initial_tasks
+                    .into_iter()
+                    .map(|t| serde_json::to_value(&t).unwrap_or_default())
+                    .collect(),
+            })
+            .unwrap_or_default();
+            Ok::<_, Infallible>(
+                Event::default()
+                    .event("task:full")
+                    .data(tasks_json),
+            )
+        }));
+
+    let initial_stream = futures::stream::iter(initial_events);
+
+    let live_stream = BroadcastStream::new(rx).filter_map(|res| {
+        let event = res.ok()?;
+        let json = serde_json::to_string(&event).ok()?;
+        let event_type = match &event {
+            CrawlEvent::Status { .. } => "status",
+            CrawlEvent::TaskFull { .. } => "task:full",
+            CrawlEvent::TaskUpdate { .. } => "task:update",
+            CrawlEvent::Log { id, .. } => {
+                return Some(Ok::<_, Infallible>(
+                    Event::default()
+                        .event("log")
+                        .id(id.to_string())
+                        .data(json),
+                ));
+            }
+        };
+        Some(Ok::<_, Infallible>(
+            Event::default()
+                .event(event_type)
+                .data(json),
+        ))
+    });
+
+    let combined = initial_stream.chain(live_stream);
+
+    Sse::new(combined).keep_alive(
+        KeepAlive::new()
+            .interval(std::time::Duration::from_secs(15))
+            .text("keep-alive"),
+    )
+}
+
+/// POST /api/crawl/retry-failed — 批量重试所有 failed 状态的任务
+pub(crate) async fn retry_failed(
+    State(state): State<Arc<AppState>>,
+) -> AppResult<Json<ApiResponse<Value>>> {
+    let failed_tasks = {
+        let db = state.db.lock().await;
+        db.list_crawl_tasks(Some("failed"), 1000, 0)?
+    };
+
+    let mut count = 0i64;
+    for task in failed_tasks {
+        let db = state.db.lock().await;
+        if db.reset_task_status(task.website_book_id).is_ok() {
+            count += 1;
+        }
+    }
+
+    Ok(ok_response(json!({ "count": count })))
+}
+
+#[derive(Deserialize)]
+pub(crate) struct DeleteTasksParams {
+    pub status: Option<String>,
+}
+
+/// DELETE /api/crawl/tasks?status=failed — 按状态删除任务
+///
+/// 注意：status 为空字符串或不传时，SQL `WHERE status = ?1` 不会匹配任何行，
+/// 因此返回 count=0。客户端必须传具体 status（如 failed/success/pending 等）。
+pub(crate) async fn delete_tasks(
+    State(state): State<Arc<AppState>>,
+    Query(params): Query<DeleteTasksParams>,
+) -> AppResult<Json<ApiResponse<Value>>> {
+    let status = params.status.unwrap_or_default();
+    let count = {
+        let db = state.db.lock().await;
+        db.delete_tasks_by_status(&status)? as i64
+    };
+    Ok(ok_response(json!({ "count": count })))
 }

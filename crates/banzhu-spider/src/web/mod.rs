@@ -28,7 +28,10 @@ mod search;
 mod shelf;
 
 use books::{book_chapters, book_detail, categories, chapter_content, delete_book, list_books, stats};
-use crawl::{crawl_logs, crawl_manual, crawl_schedule, crawl_status, crawl_trigger, update_crawl_schedule};
+use crawl::{
+    crawl_logs, crawl_manual, crawl_schedule, crawl_status, crawl_stream, crawl_tasks,
+    crawl_trigger, delete_tasks, retry_failed, update_crawl_schedule,
+};
 use export::export_book;
 use search::search;
 use shelf::{
@@ -97,6 +100,7 @@ async fn log_request(req: Request<Body>, next: Next) -> Response {
 pub(crate) struct AppState {
     pub(crate) db: Arc<Mutex<Database>>,
     pub(crate) scheduler: Arc<Scheduler>,
+    pub(crate) event_bus: crate::event::EventBus,
 }
 
 // ─── Query params ────────────────────────────────────────────────────────────
@@ -168,11 +172,18 @@ pub async fn run_web() -> anyhow::Result<()> {
 
     let spider = Arc::new(BanzhuSpider::new(root_url, config.clone()));
 
-    let scheduler = Arc::new(Scheduler::new(spider, db.clone(), config.clone()));
+    let event_bus = crate::event::EventBus::new(256);
+    let scheduler = Arc::new(Scheduler::new(
+        spider,
+        db.clone(),
+        config.clone(),
+        event_bus.clone(),
+    ));
 
     let state = Arc::new(AppState {
         db: db.clone(),
         scheduler: scheduler.clone(),
+        event_bus,
     });
 
     // 启动时跑一次增量爬取
@@ -211,6 +222,12 @@ pub async fn run_web() -> anyhow::Result<()> {
         .route("/api/crawl/schedule", get(crawl_schedule).put(update_crawl_schedule))
         .route("/api/crawl/manual", post(crawl_manual))
         .route("/api/crawl/logs", get(crawl_logs))
+        .route(
+            "/api/crawl/tasks",
+            get(crawl_tasks).delete(delete_tasks),
+        )
+        .route("/api/crawl/retry-failed", post(retry_failed))
+        .route("/api/crawl/stream", get(crawl_stream))
         // API 404
         .route("/api/{*path}", get(|| async {
             ApiResponse::<serde_json::Value>::err("接口不存在")

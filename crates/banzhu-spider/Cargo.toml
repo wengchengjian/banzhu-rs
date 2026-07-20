@@ -47,3 +47,4 @@ rust-embed = { version = "8", features = ["axum"] }
 mime_guess = "2"
 ts-rs = { version = "10", features = ["chrono-impl", "no-serde-warnings"] }
 thiserror = "2"
+tokio-stream = { version = "0.1", features = ["sync"] }

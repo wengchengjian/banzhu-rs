@@ -557,18 +557,19 @@ impl Database {
 
     // ─── Crawl Logs CRUD ─────────────────────────────────────────────────────
 
-    pub fn insert_crawl_log(&self, level: &str, message: &str) -> Result<()> {
+    pub fn insert_crawl_log(&self, level: &str, message: &str) -> Result<i64> {
         let now = chrono::Utc::now().timestamp();
         self.conn.execute(
             "INSERT INTO crawl_logs (level, message, created_at) VALUES (?1, ?2, ?3)",
             params![level, message, now],
         )?;
+        let new_id = self.conn.last_insert_rowid();
         // Keep max 500 rows
         self.conn.execute(
             "DELETE FROM crawl_logs WHERE id NOT IN (SELECT id FROM crawl_logs ORDER BY id DESC LIMIT 500)",
             [],
         )?;
-        Ok(())
+        Ok(new_id)
     }
 
     pub fn get_crawl_logs(&self, limit: i64) -> Result<Vec<CrawlLogRecord>> {
