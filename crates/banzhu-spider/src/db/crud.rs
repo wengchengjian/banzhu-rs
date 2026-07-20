@@ -1,8 +1,8 @@
 //! CRUD operations for books, chapters, sections, bookshelf, reading progress, and crawl logs.
 
 use crate::db::models::{
-    BookRecord, BookshelfRecord, ChapterRecord, CrawlLogRecord, ReadingProgressRecord,
-    SearchRecord, SectionRecord,
+    BookRecord, BookshelfRecord, ChapterRecord, CrawlLogRecord, CrawlTaskRecord,
+    ReadingGoalRecord, ReadingProgressRecord, SearchRecord, SectionRecord,
 };
 use crate::db::Database;
 use anyhow::Result;
@@ -317,32 +317,22 @@ impl Database {
         Ok(())
     }
 
-    pub fn list_books(&self, limit: i64, offset: i64) -> Result<Vec<BookRecord>> {
-        let mut stmt = self.conn.prepare(
-            "SELECT id, website_book_id, path_num, title, filename, author, category, introduce, likes, word_count, page_count, created_at, updated_at
+    pub fn list_books(&self, limit: i64, offset: i64, category: Option<&str>) -> Result<Vec<BookRecord>> {
+        let sql = match category {
+            Some(_) => "SELECT id, website_book_id, path_num, title, filename, author, category, introduce, likes, word_count, page_count, created_at, updated_at
+             FROM books WHERE category = ?1 ORDER BY id ASC LIMIT ?2 OFFSET ?3",
+            None => "SELECT id, website_book_id, path_num, title, filename, author, category, introduce, likes, word_count, page_count, created_at, updated_at
              FROM books ORDER BY id ASC LIMIT ?1 OFFSET ?2",
-        )?;
-
-        let books = stmt
-            .query_map(params![limit, offset], |row| {
-                Ok(BookRecord {
-                    id: row.get(0)?,
-                    website_book_id: row.get(1)?,
-                    path_num: row.get(2)?,
-                    title: row.get(3)?,
-                    filename: row.get(4)?,
-                    author: row.get(5)?,
-                    category: row.get(6)?,
-                    introduce: row.get(7)?,
-                    likes: row.get(8)?,
-                    word_count: row.get(9)?,
-                    page_count: row.get(10)?,
-                    created_at: row.get(11)?,
-                    updated_at: row.get(12)?,
-                })
-            })?
-            .collect::<std::result::Result<Vec<_>, _>>()?;
-
+        };
+        let mut stmt = self.conn.prepare(sql)?;
+        let books = match category {
+            Some(c) => stmt
+                .query_map(params![c, limit, offset], map_book_row)?
+                .collect::<std::result::Result<Vec<_>, _>>()?,
+            None => stmt
+                .query_map(params![limit, offset], map_book_row)?
+                .collect::<std::result::Result<Vec<_>, _>>()?,
+        };
         Ok(books)
     }
 
@@ -351,6 +341,56 @@ impl Database {
             .conn
             .query_row("SELECT COUNT(*) FROM books", [], |row| row.get(0))?;
         Ok(count)
+    }
+
+    pub fn count_books_by_category(&self, category: &str) -> Result<i64> {
+        let count: i64 = self.conn.query_row(
+            "SELECT COUNT(*) FROM books WHERE category = ?1",
+            params![category],
+            |row| row.get(0),
+        )?;
+        Ok(count)
+    }
+
+    /// 统计指定书的章节数（直接 SQL COUNT，避免拉取全表）
+    pub fn count_chapters_by_book(&self, book_id: i64) -> Result<i64> {
+        let count: i64 = self.conn.query_row(
+            "SELECT COUNT(*) FROM chapters WHERE book_id = ?1",
+            params![book_id],
+            |row| row.get(0),
+        )?;
+        Ok(count)
+    }
+
+    /// 全站总章节数
+    pub fn count_all_chapters(&self) -> Result<i64> {
+        let count: i64 = self
+            .conn
+            .query_row("SELECT COUNT(*) FROM chapters", [], |row| row.get(0))?;
+        Ok(count)
+    }
+
+    /// 全站总字数
+    pub fn sum_all_word_count(&self) -> Result<i64> {
+        let total: i64 = self.conn.query_row(
+            "SELECT COALESCE(SUM(word_count), 0) FROM books",
+            [],
+            |row| row.get(0),
+        )?;
+        Ok(total)
+    }
+
+    /// 分类分布：返回 (category_name, count) 列表
+    pub fn category_distribution(&self) -> Result<Vec<(String, i64)>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT category, COUNT(*) as cnt FROM books
+             WHERE category != ''
+             GROUP BY category ORDER BY cnt DESC",
+        )?;
+        let rows = stmt
+            .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))?
+            .collect::<std::result::Result<Vec<_>, _>>()?;
+        Ok(rows)
     }
 
     pub fn list_categories(&self) -> Result<Vec<String>> {
@@ -488,18 +528,16 @@ impl Database {
         let result = self
             .conn
             .query_row(
-                "SELECT id, book_id, chapter_order, page_index, updated_at FROM reading_progress WHERE book_id = ?1",
+                "SELECT id, book_id, chapter_order, page_index, last_read_at, updated_at FROM reading_progress WHERE book_id = ?1",
                 params![book_id],
                 |row| {
-                    let updated_at: i64 = row.get(4)?;
                     Ok(ReadingProgressRecord {
                         id: row.get(0)?,
                         book_id: row.get(1)?,
                         chapter_order: row.get(2)?,
                         page_index: row.get(3)?,
-                        // Task 6 will ALTER TABLE to add last_read_at column; reuse updated_at for now
-                        last_read_at: updated_at,
-                        updated_at,
+                        last_read_at: row.get(4)?,
+                        updated_at: row.get(5)?,
                     })
                 },
             )
@@ -510,8 +548,8 @@ impl Database {
     pub fn update_progress(&self, book_id: i64, chapter_order: i64, page_index: i64) -> Result<()> {
         let now = chrono::Utc::now().timestamp();
         self.conn.execute(
-            "INSERT OR REPLACE INTO reading_progress (book_id, chapter_order, page_index, updated_at)
-             VALUES (?1, ?2, ?3, ?4)",
+            "INSERT OR REPLACE INTO reading_progress (book_id, chapter_order, page_index, last_read_at, updated_at)
+             VALUES (?1, ?2, ?3, ?4, ?4)",
             params![book_id, chapter_order, page_index, now],
         )?;
         Ok(())
@@ -549,4 +587,420 @@ impl Database {
             .collect::<std::result::Result<Vec<_>, _>>()?;
         Ok(logs)
     }
+
+    // ─── Crawl Tasks CRUD ────────────────────────────────────────────────────
+
+    /// 插入或刷新一条爬取任务（按 website_book_id UPSERT）。
+    /// 适用于开始爬取前的初始化。
+    pub fn upsert_crawl_task_pending(
+        &self,
+        website_book_id: i64,
+        title: &str,
+        trigger: &str,
+    ) -> Result<()> {
+        let now = chrono::Utc::now().timestamp();
+        self.conn.execute(
+            r#"INSERT INTO crawl_tasks
+                (website_book_id, title, status, progress, trigger, created_at, updated_at)
+              VALUES (?1, ?2, 'pending', 0, ?3, ?4, ?4)
+              ON CONFLICT(website_book_id) DO UPDATE SET
+                title = excluded.title,
+                status = 'pending',
+                progress = 0,
+                error_message = '',
+                trigger = excluded.trigger,
+                chapters_total = 0,
+                chapters_done = 0,
+                started_at = NULL,
+                finished_at = NULL,
+                updated_at = excluded.updated_at"#,
+            params![website_book_id, title, trigger, now],
+        )?;
+        Ok(())
+    }
+
+    /// 标记任务为运行中
+    pub fn mark_crawl_task_running(&self, website_book_id: i64) -> Result<()> {
+        let now = chrono::Utc::now().timestamp();
+        self.conn.execute(
+            r#"UPDATE crawl_tasks
+               SET status = 'running', progress = 0, started_at = ?2, finished_at = NULL, updated_at = ?2
+               WHERE website_book_id = ?1"#,
+            params![website_book_id, now],
+        )?;
+        Ok(())
+    }
+
+    /// 更新任务进度（章节级别）
+    pub fn update_crawl_task_progress(
+        &self,
+        website_book_id: i64,
+        chapters_total: i64,
+        chapters_done: i64,
+    ) -> Result<()> {
+        let now = chrono::Utc::now().timestamp();
+        let total = chapters_total.max(1);
+        let progress = ((chapters_done as f64 / total as f64) * 100.0) as i64;
+        self.conn.execute(
+            r#"UPDATE crawl_tasks
+               SET chapters_total = ?2, chapters_done = ?3, progress = ?4, updated_at = ?5
+               WHERE website_book_id = ?1"#,
+            params![
+                website_book_id,
+                chapters_total,
+                chapters_done,
+                progress,
+                now
+            ],
+        )?;
+        Ok(())
+    }
+
+    /// 标记任务成功完成
+    pub fn mark_crawl_task_success(
+        &self,
+        website_book_id: i64,
+        book_id: Option<i64>,
+        chapters_done: i64,
+    ) -> Result<()> {
+        let now = chrono::Utc::now().timestamp();
+        self.conn.execute(
+            r#"UPDATE crawl_tasks
+               SET status = 'success', progress = 100, book_id = ?2,
+                   chapters_done = ?3, finished_at = ?4, error_message = '', updated_at = ?4
+               WHERE website_book_id = ?1"#,
+            params![website_book_id, book_id, chapters_done, now],
+        )?;
+        Ok(())
+    }
+
+    /// 标记任务失败
+    pub fn mark_crawl_task_failed(
+        &self,
+        website_book_id: i64,
+        error_message: &str,
+    ) -> Result<()> {
+        let now = chrono::Utc::now().timestamp();
+        self.conn.execute(
+            r#"UPDATE crawl_tasks
+               SET status = 'failed', finished_at = ?3, error_message = ?2, updated_at = ?3
+               WHERE website_book_id = ?1"#,
+            params![website_book_id, error_message, now],
+        )?;
+        Ok(())
+    }
+
+    /// 标记任务跳过（已存在且无更新）
+    pub fn mark_crawl_task_skipped(&self, website_book_id: i64) -> Result<()> {
+        let now = chrono::Utc::now().timestamp();
+        self.conn.execute(
+            r#"UPDATE crawl_tasks
+               SET status = 'skipped', progress = 100, finished_at = ?2, updated_at = ?2
+               WHERE website_book_id = ?1"#,
+            params![website_book_id, now],
+        )?;
+        Ok(())
+    }
+
+    /// 按状态查询爬取任务（status=None 表示全部）
+    pub fn list_crawl_tasks(
+        &self,
+        status: Option<&str>,
+        limit: i64,
+        offset: i64,
+    ) -> Result<Vec<CrawlTaskRecord>> {
+        let sql = match status {
+            Some(_) => r#"SELECT id, website_book_id, book_id, title, status, progress,
+                                 chapters_total, chapters_done, error_message, trigger,
+                                 started_at, finished_at, created_at, updated_at
+                          FROM crawl_tasks WHERE status = ?1
+                          ORDER BY updated_at DESC LIMIT ?2 OFFSET ?3"#,
+            None => r#"SELECT id, website_book_id, book_id, title, status, progress,
+                              chapters_total, chapters_done, error_message, trigger,
+                              started_at, finished_at, created_at, updated_at
+                       FROM crawl_tasks
+                       ORDER BY updated_at DESC LIMIT ?2 OFFSET ?3"#,
+        };
+        let mut stmt = self.conn.prepare(sql)?;
+        let rows = match status {
+            Some(s) => stmt
+                .query_map(params![s, limit, offset], map_crawl_task)?
+                .collect::<std::result::Result<Vec<_>, _>>()?,
+            None => stmt
+                .query_map(params![limit, offset], map_crawl_task)?
+                .collect::<std::result::Result<Vec<_>, _>>()?,
+        };
+        Ok(rows)
+    }
+
+    /// 统计各状态的任务数
+    pub fn count_crawl_tasks_by_status(&self) -> Result<CrawlTaskStatusCount> {
+        let mut stmt = self.conn.prepare(
+            r#"SELECT
+                SUM(CASE WHEN status='pending' THEN 1 ELSE 0 END) as pending,
+                SUM(CASE WHEN status='running' THEN 1 ELSE 0 END) as running,
+                SUM(CASE WHEN status='success' THEN 1 ELSE 0 END) as success,
+                SUM(CASE WHEN status='failed' THEN 1 ELSE 0 END) as failed,
+                SUM(CASE WHEN status='skipped' THEN 1 ELSE 0 END) as skipped,
+                COUNT(*) as total
+               FROM crawl_tasks"#,
+        )?;
+        let result = stmt.query_row([], |row| {
+            Ok(CrawlTaskStatusCount {
+                pending: row.get::<_, Option<i64>>(0)?.unwrap_or(0),
+                running: row.get::<_, Option<i64>>(1)?.unwrap_or(0),
+                success: row.get::<_, Option<i64>>(2)?.unwrap_or(0),
+                failed: row.get::<_, Option<i64>>(3)?.unwrap_or(0),
+                skipped: row.get::<_, Option<i64>>(4)?.unwrap_or(0),
+                total: row.get::<_, Option<i64>>(5)?.unwrap_or(0),
+            })
+        })?;
+        Ok(result)
+    }
+
+    /// 获取单个爬取任务（按 website_book_id）
+    pub fn get_crawl_task(&self, website_book_id: i64) -> Result<Option<CrawlTaskRecord>> {
+        let result = self
+            .conn
+            .query_row(
+                r#"SELECT id, website_book_id, book_id, title, status, progress,
+                          chapters_total, chapters_done, error_message, trigger,
+                          started_at, finished_at, created_at, updated_at
+                   FROM crawl_tasks WHERE website_book_id = ?1"#,
+                params![website_book_id],
+                map_crawl_task,
+            )
+            .optional()?;
+        Ok(result)
+    }
+
+    // ─── Reading Sessions CRUD ──────────────────────────────────────────────
+
+    pub fn insert_reading_session(
+        &self,
+        book_id: i64,
+        chapter_order: i64,
+        duration_sec: i64,
+        chapters_read: i64,
+        started_at: i64,
+        ended_at: i64,
+    ) -> Result<i64> {
+        self.conn.execute(
+            "INSERT INTO reading_sessions (book_id, chapter_order, duration_sec, chapters_read, started_at, ended_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            params![book_id, chapter_order, duration_sec, chapters_read, started_at, ended_at],
+        )?;
+        Ok(self.conn.last_insert_rowid())
+    }
+
+    pub fn sum_today_reading(&self) -> Result<(i64, i64)> {
+        let row = self.conn.query_row(
+            "SELECT COALESCE(SUM(duration_sec), 0) AS duration,
+                    COALESCE(SUM(chapters_read), 0) AS chapters
+             FROM reading_sessions
+             WHERE started_at >= strftime('%s', 'now', 'start of day', 'localtime')",
+            [],
+            |row| Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?)),
+        )?;
+        Ok(row)
+    }
+
+    pub fn heatmap_data(&self, year: i32) -> Result<Vec<(String, i64, i64)>> {
+        let start = format!("{}-01-01T00:00:00", year);
+        let end = format!("{}-01-01T00:00:00", year + 1);
+        let mut stmt = self.conn.prepare(
+            "SELECT date(started_at, 'unixepoch', 'localtime') AS date,
+                    COALESCE(SUM(duration_sec), 0) AS duration,
+                    COALESCE(SUM(chapters_read), 0) AS chapters
+             FROM reading_sessions
+             WHERE started_at >= strftime('%s', ?1)
+               AND started_at <  strftime('%s', ?2)
+             GROUP BY date",
+        )?;
+        let rows = stmt
+            .query_map(params![start, end], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, i64>(1)?,
+                    row.get::<_, i64>(2)?,
+                ))
+            })?
+            .collect::<std::result::Result<Vec<_>, _>>()?;
+        Ok(rows)
+    }
+
+    pub fn reading_timeline(&self, days: i32) -> Result<Vec<(String, i64, i64)>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT date(started_at, 'unixepoch', 'localtime') AS date,
+                    COALESCE(SUM(duration_sec), 0) AS duration,
+                    COALESCE(SUM(chapters_read), 0) AS chapters
+             FROM reading_sessions
+             WHERE started_at >= strftime('%s', 'now', ?1)
+             GROUP BY date
+             ORDER BY date ASC",
+        )?;
+        let rows = stmt
+            .query_map(params![format!("-{} days", days)], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, i64>(1)?,
+                    row.get::<_, i64>(2)?,
+                ))
+            })?
+            .collect::<std::result::Result<Vec<_>, _>>()?;
+        Ok(rows)
+    }
+
+    pub fn reading_history(&self, limit: i64) -> Result<Vec<ReadingHistoryRow>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT rs.book_id, b.title AS book_title,
+                    MAX(rs.started_at) AS last_read_at,
+                    MAX(rs.chapter_order) AS last_chapter_order,
+                    COALESCE(SUM(rs.duration_sec), 0) AS total_duration_sec,
+                    COALESCE(SUM(rs.chapters_read), 0) AS chapters_read
+             FROM reading_sessions rs
+             LEFT JOIN books b ON b.id = rs.book_id
+             GROUP BY rs.book_id
+             ORDER BY last_read_at DESC
+             LIMIT ?1",
+        )?;
+        let rows = stmt
+            .query_map(params![limit], |row| {
+                Ok(ReadingHistoryRow {
+                    book_id: row.get(0)?,
+                    book_title: row.get(1)?,
+                    last_read_at: row.get(2)?,
+                    last_chapter_order: row.get(3)?,
+                    total_duration_sec: row.get(4)?,
+                    chapters_read: row.get(5)?,
+                })
+            })?
+            .collect::<std::result::Result<Vec<_>, _>>()?;
+        Ok(rows)
+    }
+
+    // ─── Reading Goals CRUD ─────────────────────────────────────────────────
+
+    pub fn get_reading_goal(&self) -> Result<ReadingGoalRecord> {
+        let row = self.conn.query_row(
+            "SELECT id, daily_minutes, daily_chapters, updated_at FROM reading_goals WHERE id = 1",
+            [],
+            |row| {
+                Ok(ReadingGoalRecord {
+                    id: row.get(0)?,
+                    daily_minutes: row.get(1)?,
+                    daily_chapters: row.get(2)?,
+                    updated_at: row.get(3)?,
+                })
+            },
+        )?;
+        Ok(row)
+    }
+
+    pub fn update_reading_goal(&self, daily_minutes: i64, daily_chapters: i64) -> Result<()> {
+        self.conn.execute(
+            "UPDATE reading_goals SET daily_minutes = ?1, daily_chapters = ?2, updated_at = unixepoch() WHERE id = 1",
+            params![daily_minutes, daily_chapters],
+        )?;
+        Ok(())
+    }
+
+    // ─── Crawl Tasks 辅助方法（plan Task 6 新增） ──────────────────────────
+
+    /// 重置 failed/success 状态的任务为 pending（用于重试）
+    pub fn reset_task_status(&self, website_book_id: i64) -> Result<u64> {
+        let now = chrono::Utc::now().timestamp();
+        let res = self.conn.execute(
+            "UPDATE crawl_tasks
+             SET status = 'pending', error_message = '', progress = 0,
+                 started_at = NULL, finished_at = NULL, updated_at = ?2
+             WHERE website_book_id = ?1 AND status IN ('failed', 'success')",
+            params![website_book_id, now],
+        )?;
+        Ok(res as u64)
+    }
+
+    /// 按状态删除任务
+    pub fn delete_tasks_by_status(&self, status: &str) -> Result<u64> {
+        let res = self.conn.execute(
+            "DELETE FROM crawl_tasks WHERE status = ?1",
+            params![status],
+        )?;
+        Ok(res as u64)
+    }
+
+    /// 获取 id 大于 after_id 的日志（用于 SSE 增量推送）
+    pub fn list_logs_after(&self, after_id: i64, limit: i64) -> Result<Vec<CrawlLogRecord>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT id, level, message, created_at FROM crawl_logs WHERE id > ?1 ORDER BY id ASC LIMIT ?2",
+        )?;
+        let logs = stmt
+            .query_map(params![after_id, limit], |row| {
+                Ok(CrawlLogRecord {
+                    id: row.get(0)?,
+                    level: row.get(1)?,
+                    message: row.get(2)?,
+                    created_at: row.get(3)?,
+                })
+            })?
+            .collect::<std::result::Result<Vec<_>, _>>()?;
+        Ok(logs)
+    }
+}
+
+#[derive(Debug, Clone, serde::Serialize, Default)]
+pub struct CrawlTaskStatusCount {
+    pub pending: i64,
+    pub running: i64,
+    pub success: i64,
+    pub failed: i64,
+    pub skipped: i64,
+    pub total: i64,
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct ReadingHistoryRow {
+    pub book_id: i64,
+    pub book_title: Option<String>,
+    pub last_read_at: i64,
+    pub last_chapter_order: i64,
+    pub total_duration_sec: i64,
+    pub chapters_read: i64,
+}
+
+fn map_crawl_task(row: &rusqlite::Row) -> rusqlite::Result<CrawlTaskRecord> {
+    Ok(CrawlTaskRecord {
+        id: row.get(0)?,
+        website_book_id: row.get(1)?,
+        book_id: row.get(2)?,
+        title: row.get(3)?,
+        status: row.get(4)?,
+        progress: row.get(5)?,
+        chapters_total: row.get(6)?,
+        chapters_done: row.get(7)?,
+        error_message: row.get(8)?,
+        trigger: row.get(9)?,
+        started_at: row.get(10)?,
+        finished_at: row.get(11)?,
+        created_at: row.get(12)?,
+        updated_at: row.get(13)?,
+    })
+}
+
+fn map_book_row(row: &rusqlite::Row) -> rusqlite::Result<BookRecord> {
+    Ok(BookRecord {
+        id: row.get(0)?,
+        website_book_id: row.get(1)?,
+        path_num: row.get(2)?,
+        title: row.get(3)?,
+        filename: row.get(4)?,
+        author: row.get(5)?,
+        category: row.get(6)?,
+        introduce: row.get(7)?,
+        likes: row.get(8)?,
+        word_count: row.get(9)?,
+        page_count: row.get(10)?,
+        created_at: row.get(11)?,
+        updated_at: row.get(12)?,
+    })
 }

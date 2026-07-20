@@ -11,6 +11,7 @@ mod models;
 mod schema;
 
 pub use models::*;
+pub use crud::{CrawlTaskStatusCount, ReadingHistoryRow};
 
 use anyhow::Result;
 use rusqlite::Connection;
@@ -53,6 +54,21 @@ impl Database {
         self.conn.execute(schema::CREATE_BOOKSHELF_TABLE, [])?;
         self.conn.execute(schema::CREATE_READING_PROGRESS_TABLE, [])?;
         self.conn.execute(schema::CREATE_CRAWL_LOGS_TABLE, [])?;
+        self.conn.execute(schema::CREATE_CRAWL_TASKS_TABLE, [])?;
+        // 新增：reading_sessions 和 reading_goals 表
+        self.conn.execute_batch(schema::CREATE_READING_SESSIONS_TABLE)?;
+        self.conn.execute_batch(schema::CREATE_READING_GOALS_TABLE)?;
+        // 新增：ALTER TABLE reading_progress 添加 last_read_at 列（如果不存在）
+        let has_last_read_at: bool = self
+            .conn
+            .prepare("PRAGMA table_info(reading_progress)")?
+            .query_map([], |r| r.get::<_, String>(1))?
+            .filter_map(Result::ok)
+            .any(|c| c == "last_read_at");
+        if !has_last_read_at {
+            self.conn
+                .execute(schema::ALTER_READING_PROGRESS_LAST_READ, [])?;
+        }
         self.conn.execute_batch(schema::CREATE_INDEX)?;
         Ok(())
     }
