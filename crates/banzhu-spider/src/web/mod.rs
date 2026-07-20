@@ -96,10 +96,10 @@ async fn log_request(req: Request<Body>, next: Next) -> Response {
 
 // ─── Shared state ────────────────────────────────────────────────────────────
 
-pub(crate) struct AppState {
-    pub(crate) db: Arc<Mutex<Database>>,
-    pub(crate) scheduler: Arc<Scheduler>,
-    pub(crate) event_bus: crate::event::EventBus,
+pub struct AppState {
+    pub db: Arc<Mutex<Database>>,
+    pub scheduler: Arc<Scheduler>,
+    pub event_bus: crate::event::EventBus,
 }
 
 // ─── Query params ────────────────────────────────────────────────────────────
@@ -151,51 +151,9 @@ fn file_response(path: &str, file: rust_embed::EmbeddedFile) -> Response {
 
 // ─── Startup ─────────────────────────────────────────────────────────────────
 
-pub async fn run_web() -> anyhow::Result<()> {
-    let db = Arc::new(Mutex::new(appconfig::open_db()?));
-    log::info!("数据库已连接: {}", appconfig::get_db_path().unwrap_or_default());
-
-    let config_path = "spider.toml";
-    let config = Config::builder()
-        .add_source(config::File::with_name(config_path))
-        .build()?;
-    let config = Arc::new(config);
-
-    let root_url = config
-        .get_string("root_url")
-        .unwrap_or_else(|_| "https://www.bz11111111.com/".to_string());
-    log::info!("目标站点: {}", root_url);
-    log::info!("定时爬取: enabled={}, schedule={}", 
-        config.get_bool("cron.enabled").unwrap_or(true),
-        config.get_string("cron.schedule").unwrap_or_else(|_| "0 */6 * * *".into()));
-
-    let spider = Arc::new(BanzhuSpider::new(root_url, config.clone()));
-
-    let event_bus = crate::event::EventBus::new(256);
-    let scheduler = Arc::new(Scheduler::new(
-        spider,
-        db.clone(),
-        config.clone(),
-        event_bus.clone(),
-    ));
-
-    let state = Arc::new(AppState {
-        db: db.clone(),
-        scheduler: scheduler.clone(),
-        event_bus,
-    });
-
-    // 启动时跑一次增量爬取
-    let scheduler_clone = scheduler.clone();
-    std::thread::spawn(move || {
-        let rt = tokio::runtime::Runtime::new()
-            .expect("Failed to create tokio runtime for crawl");
-        if let Err(e) = rt.block_on(scheduler_clone.crawl_once()) {
-            log::error!("Initial crawl failed: {}", e);
-        }
-    });
-
-    let app = Router::new()
+/// 构造 API Router（供 run_web 和集成测试复用）
+pub fn build_router(state: Arc<AppState>) -> Router {
+    Router::new()
         // 书籍
         .route("/api/books", get(list_books))
         .route("/api/books/{id}", get(book_detail).delete(delete_book))
@@ -242,7 +200,54 @@ pub async fn run_web() -> anyhow::Result<()> {
         .fallback(crate::web::static_handler)
         // 请求日志
         .layer(middleware::from_fn(log_request))
-        .with_state(state);
+        .with_state(state)
+}
+
+pub async fn run_web() -> anyhow::Result<()> {
+    let db = Arc::new(Mutex::new(appconfig::open_db()?));
+    log::info!("数据库已连接: {}", appconfig::get_db_path().unwrap_or_default());
+
+    let config_path = "spider.toml";
+    let config = Config::builder()
+        .add_source(config::File::with_name(config_path))
+        .build()?;
+    let config = Arc::new(config);
+
+    let root_url = config
+        .get_string("root_url")
+        .unwrap_or_else(|_| "https://www.bz11111111.com/".to_string());
+    log::info!("目标站点: {}", root_url);
+    log::info!("定时爬取: enabled={}, schedule={}", 
+        config.get_bool("cron.enabled").unwrap_or(true),
+        config.get_string("cron.schedule").unwrap_or_else(|_| "0 */6 * * *".into()));
+
+    let spider = Arc::new(BanzhuSpider::new(root_url, config.clone()));
+
+    let event_bus = crate::event::EventBus::new(256);
+    let scheduler = Arc::new(Scheduler::new(
+        spider,
+        db.clone(),
+        config.clone(),
+        event_bus.clone(),
+    ));
+
+    let state = Arc::new(AppState {
+        db: db.clone(),
+        scheduler: scheduler.clone(),
+        event_bus,
+    });
+
+    // 启动时跑一次增量爬取
+    let scheduler_clone = scheduler.clone();
+    std::thread::spawn(move || {
+        let rt = tokio::runtime::Runtime::new()
+            .expect("Failed to create tokio runtime for crawl");
+        if let Err(e) = rt.block_on(scheduler_clone.crawl_once()) {
+            log::error!("Initial crawl failed: {}", e);
+        }
+    });
+
+    let app = build_router(state);
 
     let port = config.get_int("server.port").unwrap_or(3000);
     let addr = format!("0.0.0.0:{}", port);
