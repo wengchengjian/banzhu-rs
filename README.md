@@ -1,135 +1,109 @@
 # Banzhu Spider
 
-[中文文档](README_zh.md)
+Rust 小说爬虫，自动绕过 Cloudflare Turnstile 验证，支持增量爬取、全文搜索、REST API。
 
-A web scraping tool built with Rust, Python, and JavaScript for educational purposes.
+## 架构
 
-> Note: This project is for Rust web scraping learning purposes only. It demonstrates multi-language interoperability between Python, Rust, and JavaScript.
-
-## Features
-
-- Cloudflare bypass using Python's DrissionPage
-- Anti-crawler mechanisms handling:
-  - Image-based text extraction
-  - Font obfuscation
-  - JavaScript deobfuscation
-  - AES decryption
-- Configurable concurrent downloading
-- Progress bar visualization
-- Automatic retry mechanism
-
-## Architecture
-
-The project uses a multi-language approach to leverage the strengths of each:
-- **Rust**: Core spider logic and concurrent downloads
-- **Python**: Cloudflare bypass and browser automation
-- **JavaScript**: DOM manipulation and decryption
-
-### Components
-- `banzhuspider.rs`: Main spider implementation
-- `bypass.rs/py`: Cloudflare bypass logic
-- `task.rs`: Download task management
-- `error.rs`: Error handling
-- `jdom.py`: JavaScript DOM operations
-
-## Environment Requirements
-
-- Python 3.8+
-- Node.js 14+
-- Rust 1.70+
-- OpenCV 4.x
-- At least 4GB RAM
-- Windows/Linux/MacOS
-
-## Dependencies
-
-### Python
-- DrissionPage: Browser automation and Cloudflare bypass
-- execjs: JavaScript execution
-- opencv-python: Image processing
-
-### Node.js
-- jsdom: DOM manipulation
-
-### Rust
-- tokio: Async runtime
-- reqwest: HTTP client
-- scraper: HTML parsing
-- serde: Serialization
-- config: Configuration management
-- encoding: Character encoding
-- opencv: Image processing
-- pyo3: Python bindings
-
-## Setup
-
-1. Install Rust (if not already installed):
-```bash
-curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+```
+banzhu-rs/                        ← Cargo 项目根
+├── Cargo.toml                    ← 项目依赖与元数据
+├── spider.toml                   ← 运行时配置
+├── src/
+│   ├── cf/                       ← Cloudflare 绕过
+│   │   ├── mod.rs                ← CfManager (singleflight cookie 管理)
+│   │   └── turnstile.rs          ← CDP 穿透 shadow DOM + 模拟点击
+│   ├── task/                     ← 下载任务
+│   │   ├── mod.rs                ← 下载流程编排
+│   │   ├── parse.rs              ← HTML 结构解析
+│   │   └── content.rs            ← 正文提取 + 反爬解密
+│   ├── db/                       ← 数据层 (SQLite)
+│   │   ├── mod.rs                ← 连接管理
+│   │   ├── schema.rs             ← DDL + 迁移
+│   │   ├── models.rs             ← 数据模型
+│   │   ├── crud.rs               ← 增删改查
+│   │   └── fts.rs                ← FTS5 全文索引
+│   ├── web/                      ← REST API (Axum)
+│   │   ├── mod.rs                ← 路由 + 优雅关闭
+│   │   ├── books.rs              ← 书籍接口
+│   │   ├── search.rs             ← 搜索接口
+│   │   └── crawl.rs              ← 爬取控制
+│   ├── banzhuspider.rs           ← 爬虫核心 (wreq Chrome137 指纹)
+│   ├── scheduler.rs              ← 定时增量爬取
+│   ├── search.rs                 ← 中文分词 + BM25
+│   ├── crypto.rs                 ← RC4/AES 解密
+│   └── appconfig.rs              ← 用户配置
+└── examples/
+    ├── smoke_test.rs             ← 冒烟测试
+    └── download_book.rs          ← 单本下载示例
 ```
 
-2. Install Python dependencies:
-```bash
-pip install DrissionPage execjs opencv-python
-```
+## 核心技术
 
-3. Install Node.js dependencies:
-```bash
-npm install jsdom
-```
+| 层级 | 方案 |
+|------|------|
+| TLS 指纹 | wreq Chrome137 模拟 (JA3/JA4) |
+| CF 验证 | stealth Chrome + CDP 穿透 closed shadow DOM + Turnstile 点击 |
+| Cookie 管理 | singleflight (RwLock + refresh_lock)，20 分钟 TTL 自动刷新 |
+| 反爬对抗 | 图片字体映射 + RC4/AES 解密 + GBK 编码处理 |
+| 并发模型 | tokio async + buffer_unordered，章节 8 并发，书籍 4 并发 |
+| 存储 | SQLite WAL + FTS5 全文搜索 (BM25) |
 
-4. Install OpenCV:
-- Windows: Download and install from opencv.org
-- Linux: `sudo apt-get install libopencv-dev`
-- MacOS: `brew install opencv`
+## 环境要求
 
-5. Configure spider settings in `spider.toml`:
-```toml
-root_url = "your_target_url"
-max_num = 1000  # Maximum number of items to download
-start = 1       # Starting index
-```
+- Rust 1.75+
+- Chrome/Chromium (用于 CF 验证)
+- Windows / macOS / Linux (需 GUI 环境)
 
-## Usage
+## 快速开始
 
 ```bash
+# 编译
+cargo build
+
+# 启动 API 服务 (端口 3000)
 cargo run
+
+# 冒烟测试 (验证 CF 绕过 + 下载链路)
+cargo run --example smoke_test
+
+# 下载单本书
+cargo run --example download_book
 ```
 
-## Configuration
+## 配置
 
-The spider can be configured through `spider.toml`:
-- `root_url`: Target website URL
-- `max_num`: Maximum number of items to process
-- `start`: Starting index for processing
+`spider.toml`:
 
-## Anti-Crawler Mechanisms
+```toml
+root_url = "https://www.bz555555555.com"
 
-### Image and Font Anti-Crawler
-The project uses image recognition technology to handle image-based anti-crawler mechanisms, establishing a mapping between images and text. For font-based anti-crawler mechanisms, it processes through font mapping file analysis.
+[cron]
+enabled = true
+schedule = "0 */6 * * *"   # 每 6 小时增量爬取
+pages_limit = 50
+```
 
-### AES Decryption
-The website's encryption key is visible in the frontend, with the first 16 bits as IV and the last 16 bits as key, enabling decryption using this information.
+## API
 
-## Known Limitations
+| 方法 | 路径 | 说明 |
+|------|------|------|
+| GET | `/api/books?page=&limit=&category=` | 书籍列表 |
+| GET | `/api/books/:id` | 书籍详情 |
+| GET | `/api/books/:id/chapters` | 章节列表 |
+| GET | `/api/books/:id/chapters/:order` | 章节内容 |
+| GET | `/api/search?q=&field=&page=` | 全文搜索 |
+| GET | `/api/categories` | 分类列表 |
+| GET | `/api/stats` | 统计信息 |
+| POST | `/api/crawl/trigger` | 手动触发爬取 |
+| GET | `/api/crawl/status` | 爬取状态 |
 
-- Limited concurrent processing
-- Some content parsing may fail
-- No command-line interface yet
+## 测试
 
-## Roadmap
-
-- [ ] Improve concurrent processing
-- [ ] Add command-line interface for search and download
-- [ ] Better error handling and recovery
-- [ ] Enhanced logging system
-- [ ] Unit test coverage
-- [ ] Documentation improvements
-
-## Contributing
-
-Contributions are welcome! Please feel free to submit a Pull Request.
+```bash
+cargo test                  # 单元测试
+cargo run --example smoke_test  # 端到端冒烟测试
+```
 
 ## License
 
-This project is for educational purposes only. Please ensure you comply with the target website's terms of service and robots.txt policies.
+MIT. 仅供学习研究，请遵守目标站点服务条款。

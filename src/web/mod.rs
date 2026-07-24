@@ -217,7 +217,7 @@ pub async fn run_web() -> anyhow::Result<()> {
         config.get_bool("cron.enabled").unwrap_or(true),
         config.get_string("cron.schedule").unwrap_or_else(|_| "0 */6 * * *".into()));
 
-    let spider = Arc::new(BanzhuSpider::new(root_url, config.clone()));
+    let spider = Arc::new(BanzhuSpider::new_with_probe(root_url, config.clone()).await);
 
     let event_bus = crate::event::EventBus::new(256);
     let scheduler = Arc::new(Scheduler::new(

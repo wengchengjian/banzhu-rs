@@ -1,3 +1,4 @@
+use crate::db::Database;
 use anyhow::{anyhow, Result};
 use serde::{Deserialize, Serialize};
 use std::fs;
@@ -102,6 +103,11 @@ pub fn get_db_path() -> Result<String> {
 pub fn get_root_url() -> Result<String> {
     let config = load_app_config()?;
     Ok(config.root_url)
+}
+
+pub fn open_db() -> Result<Database> {
+    let db_path = get_db_path()?;
+    Database::open(&db_path)
 }
 
 #[cfg(test)]

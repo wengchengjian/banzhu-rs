@@ -40,8 +40,8 @@ impl Display for SpiderError {
 
 impl StdError for SpiderError {}
 
-impl From<reqwest::Error> for SpiderError {
-    fn from(err: reqwest::Error) -> Self {
+impl From<wreq::Error> for SpiderError {
+    fn from(err: wreq::Error) -> Self {
         SpiderError::RequestError(err.to_string())
     }
 }
@@ -66,3 +66,39 @@ impl From<serde_json::Error> for SpiderError {
 
 /// Result type alias for SpiderError
 pub type Result<T> = std::result::Result<T, SpiderError>;
+
+// ─── Web API Error (Task 7) ────────────────────────────────────────────────
+
+use axum::{http::StatusCode, response::{IntoResponse, Json, Response}};
+use serde_json::{json, Value};
+use thiserror::Error;
+
+/// Web API 错误类型，支持 `?` 操作符自动转换 `anyhow::Error` / `rusqlite::Error`
+#[derive(Debug, Error)]
+pub enum AppError {
+    #[error("not found")]
+    NotFound,
+    #[error("bad request: {0}")]
+    BadRequest(String),
+    #[error("database error: {0}")]
+    Database(#[from] rusqlite::Error),
+    #[error("internal error: {0}")]
+    Internal(#[from] anyhow::Error),
+}
+
+impl IntoResponse for AppError {
+    fn into_response(self) -> Response {
+        let status = match &self {
+            AppError::NotFound => StatusCode::NOT_FOUND,
+            AppError::BadRequest(_) => StatusCode::BAD_REQUEST,
+            AppError::Database(_) => StatusCode::INTERNAL_SERVER_ERROR,
+            AppError::Internal(_) => StatusCode::INTERNAL_SERVER_ERROR,
+        };
+        // 保持与 ApiResponse::err 一致的格式：{code: -1, msg: ...}
+        let body: Value = json!({ "code": -1, "msg": self.to_string() });
+        (status, Json(body)).into_response()
+    }
+}
+
+/// Web API Result 类型别名
+pub type AppResult<T> = std::result::Result<T, AppError>;

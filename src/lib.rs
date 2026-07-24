@@ -1,23 +1,20 @@
+pub mod appconfig;
 pub mod banzhuspider;
-pub mod bypass;
-pub mod cli;
+pub mod cf;
+pub mod crypto;
 pub mod db;
 pub mod error;
-pub mod task;
-pub mod appconfig;
-pub mod import;
+pub mod event;
+pub mod scheduler;
 pub mod search;
+pub mod task;
+pub mod web;
 use crate::error::SpiderError;
 use anyhow::Result;
 use base64::engine::general_purpose;
 use base64::Engine;
 use cipher::block_padding::Pkcs7;
 use cipher::{BlockDecryptMut, BlockEncryptMut, KeyIvInit};
-use indicatif::{MultiProgress, ProgressBar, ProgressDrawTarget, ProgressStyle};
-use opencv::prelude::*;
-use pyo3::ffi::c_str;
-use pyo3::prelude::{PyAnyMethods, PyModule};
-use pyo3::Python;
 use rand::rngs::OsRng;
 use rand_core::TryRngCore;
 
@@ -26,27 +23,9 @@ type Aes128CbcDec = cbc::Decryptor<aes::Aes128>;
 
 pub type Error = Box<dyn std::error::Error + Sync + Send>;
 
-const POST_TEXT: &'static str =
-    "&#20026;&#38450;&#27490;&#24694;&#24847;&#35775;&#38382;&#44;&#35831;&#36755;&#20837;【1234】";
-const DEFAULT_USER_AGENT: &'static str = "Mozilla/5.0 (Linux; Android 6.0; Nexus 5 Build/MRA58N) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Mobile Safari/537.36";
+pub const DEFAULT_USER_AGENT: &'static str = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/137.0.0.0 Safari/537.36";
 
 const KEY: &[u8; 16] = b"abcdedghijklmnop"; // 模拟密钥，请勿在实际程序中使用
-
-pub fn get_section_data_by_py(html: &str, ns: &str) -> Result<String> {
-    Python::with_gil(|py| {
-        let code = c_str!(include_str!("jdom.py"));
-
-        let jdom = PyModule::from_code(py, code, c_str!("jdom.py"), c_str!("jdom"))
-            .expect("Unable to load jdom.py");
-
-        let content = jdom
-            .getattr("get_section_data_by_js")?
-            .call1((html, ns))?
-            .extract::<String>()
-            .unwrap_or(String::new());
-        Ok(content)
-    })
-}
 
 pub fn decrpyt_aes_128_cbc(cipher_text: &[u8], code: &[u8]) -> Result<Vec<u8>, SpiderError> {
     let m = md5::compute(code);
@@ -58,7 +37,7 @@ pub fn decrpyt_aes_128_cbc(cipher_text: &[u8], code: &[u8]) -> Result<Vec<u8>, S
     // base64解密
     let cipher_text = general_purpose::STANDARD
         .decode(cipher_text)
-        .expect("Error while decoding");
+        .map_err(|e| SpiderError::DecodingError(format!("base64 decode: {}", e)))?;
 
     let cipher_len = cipher_text.len();
 
@@ -68,9 +47,9 @@ pub fn decrpyt_aes_128_cbc(cipher_text: &[u8], code: &[u8]) -> Result<Vec<u8>, S
 
     // 解密
     let pt = Aes128CbcDec::new_from_slices(&key, &iv)
-        .unwrap()
+        .map_err(|_| SpiderError::DecodingError("invalid AES key/iv length".into()))?
         .decrypt_padded_mut::<Pkcs7>(&mut buf)
-        .unwrap();
+        .map_err(|_| SpiderError::DecodingError("invalid AES padding".into()))?;
     Ok(pt.to_vec())
 }
 
@@ -98,27 +77,6 @@ pub fn encrypt(plain: &[u8]) -> (Vec<u8>, [u8; 16]) {
         .unwrap();
 
     (ct.to_vec(), iv)
-}
-
-pub fn get_default_pbr_style() -> ProgressStyle {
-    ProgressStyle::default_bar()
-        .template(
-            "{spinner:.green} [{elapsed_precise}] {msg} [{bar:40.cyan/blue}] {pos}/{len} ({eta})",
-        )
-        .unwrap()
-        .progress_chars("#>-")
-}
-
-pub fn create_multi_pbr() -> MultiProgress {
-    let mp = MultiProgress::new();
-    mp.set_draw_target(ProgressDrawTarget::stdout());
-    mp
-}
-
-pub fn create_pbr(count: u64) -> ProgressBar {
-    let pb = ProgressBar::new(count);
-    pb.set_style(get_default_pbr_style());
-    pb
 }
 
 /// 生成随机 iv

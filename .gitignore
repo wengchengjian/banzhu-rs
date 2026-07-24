@@ -8,5 +8,8 @@ download_ids.txt
 exclude_ids.txt
 *.log
 agent.json
-crates/banzhu-spider/frontend/node_modules/
-crates/banzhu-spider/frontend/dist/
+frontend/node_modules/
+frontend/dist/
+.superpowers/
+docs/
+spider.toml

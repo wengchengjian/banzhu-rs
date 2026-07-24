@@ -11,7 +11,7 @@ pub struct FtsSearchResult {
     pub author: String,
     pub category: String,
     pub word_count: i64,
-    pub download_time: String,
+    pub created_at: i64,
     pub relevance_score: f64,
     pub title_matches: i64,
     pub author_matches: i64,
@@ -86,7 +86,7 @@ impl SearchCache {
     }
 }
 
-pub fn build_fts_match_expr(keyword: &str, exact: bool, search_field: SearchField) -> String {
+pub fn build_fts_match_expr(keyword: &str, _exact: bool, search_field: SearchField) -> String {
     let match_expr = format!("simple_query('{}')", escape_single_quote(keyword));
 
     match search_field {
@@ -237,7 +237,7 @@ pub fn format_search_results(
         );
         println!("│ 相关度: {} {:.0}/100", score_bar, result.relevance_score);
         println!("│ 匹配: 共{}处 {}", total_matches, field_dist);
-        println!("│ 更新: {}", result.download_time);
+        println!("│ 更新: {}", result.created_at);
         println!("│ ─────────────────────────────────────────────────────");
 
         if !result.snippet.is_empty() {
@@ -435,7 +435,7 @@ mod tests {
             author: "author".to_string(),
             category: "cat".to_string(),
             word_count: 100,
-            download_time: "2025-01-01".to_string(),
+            created_at: 0,
             relevance_score: 95.0,
             title_matches: 1,
             author_matches: 0,
@@ -490,7 +490,7 @@ mod tests {
             author: "测试作者".to_string(),
             category: "玄幻".to_string(),
             word_count: 100000,
-            download_time: "2025-01-01".to_string(),
+            created_at: 0,
             relevance_score: 85.0,
             title_matches: 2,
             author_matches: 1,
