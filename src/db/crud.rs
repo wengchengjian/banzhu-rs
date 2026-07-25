@@ -494,7 +494,11 @@ impl Database {
         Ok(book_id)
     }
 
-    /// 批量 upsert 书籍记录（按 website_book_id 幂等）
+    /// 批量 upsert 书籍记录（按 website_book_id 幂等）。
+    ///
+    /// **返回值语义**：返回值 = 已处理的输入条目数（输入切片长度），
+    /// 不区分实际是 INSERT 还是 REPLACE。
+    /// 调用方如需确知受影响行数，应另行查询数据库。
     pub fn batch_upsert_books(&self, books: &[BookRecord]) -> Result<usize> {
         let now = chrono::Utc::now().timestamp();
         let tx = self.conn.unchecked_transaction()?;
@@ -528,6 +532,13 @@ impl Database {
 
     /// 批量 upsert 章节记录。
     /// chapters: Vec<(website_book_id, ChapterRecord)> —— 方法内部 JOIN books 解析 book_id
+    ///
+    /// **返回值语义**：返回值 = 已处理的输入条目数（输入切片长度），
+    /// 不区分实际是 INSERT、REPLACE 还是 no-op。
+    /// **JOIN 不命中的行为**：当 `website_book_id` 在 books 表中不存在时，
+    /// `SELECT ... FROM books b WHERE b.website_book_id = ?` 返回 0 行，
+    /// INSERT 退化为 no-op，但 `count` 仍会自增。
+    /// 调用方如需确知实际写入行数，应另行查询数据库（例如 `get_chapters_by_book`）。
     pub fn batch_upsert_chapters(&self, chapters: &[(i64, ChapterRecord)]) -> Result<usize> {
         let tx = self.conn.unchecked_transaction()?;
         let mut count = 0;
@@ -548,6 +559,14 @@ impl Database {
     /// 批量 upsert section 记录。
     /// sections: Vec<(website_book_id, chapter_order, SectionRecord)> ——
     /// 方法内部 JOIN books + chapters 解析 chapter_id 和 book_id
+    ///
+    /// **返回值语义**：返回值 = 已处理的输入条目数（输入切片长度），
+    /// 不区分实际是 INSERT、REPLACE 还是 no-op。
+    /// **JOIN 不命中的行为**：当 `website_book_id` 不在 books 表、或对应 book
+    /// 下不存在指定 `chapter_order` 的章节时，`SELECT ... FROM chapters c JOIN
+    /// books b ...` 返回 0 行，INSERT 退化为 no-op，但 `count` 仍会自增。
+    /// 调用方如需确知实际写入行数，应另行查询数据库（例如
+    /// `get_sections_by_chapter` / `get_sections_by_book`）。
     pub fn batch_upsert_sections(&self, sections: &[(i64, i64, SectionRecord)]) -> Result<usize> {
         let tx = self.conn.unchecked_transaction()?;
         let mut count = 0;
