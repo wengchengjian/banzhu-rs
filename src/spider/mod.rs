@@ -3,8 +3,8 @@
 //! 取代旧的 banzhuspider + task + cf 三模块。
 
 pub mod parse;
+pub mod stop;
 // 后续 task 添加：
-// pub mod stop;
 // pub mod pipeline;
 // pub mod callbacks;
 
