@@ -5,6 +5,7 @@ pub mod error;
 pub mod event;
 pub mod scheduler;
 pub mod search;
+pub mod spider;
 pub mod web;
 use crate::error::SpiderError;
 use anyhow::Result;
