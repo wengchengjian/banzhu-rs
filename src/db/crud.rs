@@ -180,6 +180,34 @@ impl Database {
         Ok(result)
     }
 
+    /// 按网站 book_id 获取书籍
+    pub fn get_book_by_website_id(&self, website_id: i64) -> Result<Option<BookRecord>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT id, website_book_id, path_num, title, filename, author, category, introduce, likes, word_count, page_count, created_at, updated_at
+             FROM books WHERE website_book_id = ?1",
+        )?;
+        let result = stmt
+            .query_row(params![website_id], |row| {
+                Ok(BookRecord {
+                    id: row.get(0)?,
+                    website_book_id: row.get(1)?,
+                    path_num: row.get(2)?,
+                    title: row.get(3)?,
+                    filename: row.get(4)?,
+                    author: row.get(5)?,
+                    category: row.get(6)?,
+                    introduce: row.get(7)?,
+                    likes: row.get(8)?,
+                    word_count: row.get(9)?,
+                    page_count: row.get(10)?,
+                    created_at: row.get(11)?,
+                    updated_at: row.get(12)?,
+                })
+            })
+            .optional()?;
+        Ok(result)
+    }
+
     pub fn get_chapters_by_book(&self, book_id: i64) -> Result<Vec<ChapterRecord>> {
         let mut stmt = self.conn.prepare(
             "SELECT id, book_id, title, url, chapter_order, word_count
@@ -464,6 +492,38 @@ impl Database {
         self.update_fts_index(book_id)?;
 
         Ok(book_id)
+    }
+
+    /// 批量 upsert 书籍记录（按 website_book_id 幂等）
+    pub fn batch_upsert_books(&self, books: &[BookRecord]) -> Result<usize> {
+        let now = chrono::Utc::now().timestamp();
+        let tx = self.conn.unchecked_transaction()?;
+        let mut count = 0;
+        for book in books {
+            tx.execute(
+                "INSERT OR REPLACE INTO books
+                 (website_book_id, path_num, title, filename, author, category, introduce,
+                  likes, word_count, page_count, created_at, updated_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
+                params![
+                    book.website_book_id,
+                    book.path_num,
+                    book.title,
+                    book.filename,
+                    book.author,
+                    book.category,
+                    book.introduce,
+                    book.likes,
+                    book.word_count,
+                    book.page_count,
+                    now,
+                    now,
+                ],
+            )?;
+            count += 1;
+        }
+        tx.commit()?;
+        Ok(count)
     }
 
     // ─── Bookshelf CRUD ──────────────────────────────────────────────────────
