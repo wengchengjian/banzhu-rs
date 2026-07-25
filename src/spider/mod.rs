@@ -3,9 +3,9 @@
 //! 取代旧的 banzhuspider + task + cf 三模块。
 
 pub mod parse;
+pub mod pipeline;
 pub mod stop;
 // 后续 task 添加：
-// pub mod pipeline;
 // pub mod callbacks;
 
 use std::collections::HashMap;
