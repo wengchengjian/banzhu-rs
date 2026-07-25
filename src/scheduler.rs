@@ -46,6 +46,8 @@ pub struct Scheduler {
     db: Arc<Mutex<Database>>,
     pub config: Arc<Config>,
     pub event_bus: EventBus,
+    /// 引擎控制句柄（用于外部 shutdown）
+    engine_control: Arc<Mutex<Option<Arc<wisp::crawl::runtime::EngineControl>>>>,
 }
 
 impl Scheduler {
@@ -59,6 +61,15 @@ impl Scheduler {
             db,
             config,
             event_bus,
+            engine_control: Arc::new(Mutex::new(None)),
+        }
+    }
+
+    /// 通知爬虫停止（优雅关闭）。
+    pub async fn shutdown(&self) {
+        if let Some(control) = self.engine_control.lock().await.take() {
+            info!("通知爬虫停止...");
+            control.shutdown();
         }
     }
 
@@ -114,7 +125,10 @@ impl Scheduler {
 
         let mut engine_builder = wisp::crawl::Engine::infra()
             .max_concurrent(concurrency)
-            .max_pages(pages_limit as usize)
+            // max_pages 是引擎级总页数上限（列表页+详情页+章节页）
+            // pages_limit 只控制列表页数量，由 spider start_urls 决定
+            // 设置为 pages_limit * 100 以允许详情页和章节页被处理
+            .max_pages(pages_limit as usize * 100)
             .download_delay(std::time::Duration::from_millis(500))
             .obey_robots(false)
             .fetch_mode(wisp::fetcher::FetchMode::Auto);
@@ -123,9 +137,25 @@ impl Scheduler {
             engine_builder = engine_builder.proxy(proxy);
         }
 
+        // 配置 headless 模式（false = 可见浏览器，用于绕过 CF 检测）
+        let headless = self.config.get_bool("spider.headless").unwrap_or(true);
+        let mut fetch_config = wisp::fetcher::FetchClientConfig::default();
+        fetch_config.headless = headless;
+        fetch_config.challenge_timeout = std::time::Duration::from_secs(60);
+        if let Some(proxy) = proxy_url.as_deref() {
+            fetch_config.proxy = Some(proxy.to_string());
+        }
+        engine_builder = engine_builder.fetch_client_config(fetch_config);
+
         let engine = engine_builder.build()?;
 
+        // 保存控制句柄，供外部 shutdown 使用
+        *self.engine_control.lock().await = Some(engine.control().clone());
+
         let (stats, _items) = engine.run(spider).await?;
+
+        // 清理控制句柄
+        *self.engine_control.lock().await = None;
 
         // 事后批量标记：所有 running 任务标 success
         {

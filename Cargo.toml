@@ -20,7 +20,7 @@ chrono = "0.4"
 regex = "1"
 lazy_static = "1.5"
 scraper = "0.21"
-rusqlite = { version = "0.40", features = ["bundled", "load_extension", "vtab"] }
+rusqlite = { version = "0.39", features = ["bundled", "load_extension", "vtab"] }
 axum = { version = "0.8", features = ["macros"] }
 tower-http = { version = "0.6", features = ["cors"] }
 futures = "0.3"
@@ -53,9 +53,4 @@ wisp = { path = "../wisp" }
 tokio = { version = "1", features = ["test-util", "macros", "rt-multi-thread"] }
 futures = "0.3"
 
-# 本地 fork：将 sqlite-simple-tokenizer 及其依赖 rusqlite-ext 切换到支持 rusqlite 0.40 的本地版本。
-# 上游（crates.io）最新 0.6.0 仍依赖 rusqlite 0.39，与 wisp 要求的 0.40 因 links="sqlite3" 冲突。
-# fork 源码未改动，仅升级 workspace 中的 rusqlite 版本号（0.39 → 0.40），编译通过、API 无破坏。
-[patch.crates-io]
-sqlite-simple-tokenizer = { path = "../sqlite-simple-tokenizer/sqlite-simple-tokenizer" }
-rusqlite-ext = { path = "../sqlite-simple-tokenizer/rusqlite-ext" }
+

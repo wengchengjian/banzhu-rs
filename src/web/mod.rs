@@ -230,30 +230,50 @@ pub async fn run_web() -> anyhow::Result<()> {
         event_bus,
     });
 
-    // 启动时跑一次增量爬取
+    // 启动时跑一次增量爬取（在主 runtime 上跑，关闭时自动取消）
     let scheduler_clone = scheduler.clone();
-    std::thread::spawn(move || {
-        let rt = tokio::runtime::Runtime::new()
-            .expect("Failed to create tokio runtime for crawl");
-        if let Err(e) = rt.block_on(scheduler_clone.crawl_once()) {
+    let crawl_task = tokio::spawn(async move {
+        if let Err(e) = scheduler_clone.crawl_once().await {
             log::error!("Initial crawl failed: {}", e);
         }
     });
 
     let app = build_router(state);
 
-    let port = config.get_int("server.port").unwrap_or(3000);
+    // 获取可用端口：从配置端口开始，若被占用则自增查找
+    let config_port = config.get_int("server.port").unwrap_or(4567) as u16;
+    let port = wisp::utils::find_available_port(config_port, 100)
+        .unwrap_or_else(|| {
+            log::warn!("端口 {}-{} 均被占用，使用系统随机端口", config_port, config_port + 100);
+            wisp::utils::get_random_port().expect("无法获取可用端口")
+        });
+    if port != config_port {
+        log::info!("端口 {} 被占用，使用端口 {}", config_port, port);
+    }
+
     let addr = format!("0.0.0.0:{}", port);
     let listener = tokio::net::TcpListener::bind(&addr).await?;
     log::info!("API 已启动: http://localhost:{}", port);
+
+    // 保存 scheduler 引用供关闭时使用
+    let scheduler_for_shutdown = scheduler.clone();
+
     axum::serve(listener, app)
-        .with_graceful_shutdown(async {
+        .with_graceful_shutdown(async move {
             tokio::signal::ctrl_c()
                 .await
                 .expect("failed to listen for ctrl_c");
             log::info!("收到关闭信号，正在优雅退出...");
+            // 通知爬虫停止
+            scheduler_for_shutdown.shutdown().await;
         })
         .await?;
+
+    // 等待爬虫任务结束（已收到 shutdown 信号，应快速退出）
+    log::info!("等待爬虫任务结束...");
+    let _ = crawl_task.await;
+    log::info!("爬虫任务已结束");
+
     Ok(())
 }
 

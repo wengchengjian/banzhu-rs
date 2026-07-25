@@ -1519,11 +1519,11 @@ dependencies = [
 
 [[package]]
 name = "hashlink"
-version = "0.12.1"
+version = "0.11.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "32069d97bb81e38fa67eab65e3393bf804bb85969f2bc06bf13f64aef5aba248"
+checksum = "824e001ac4f3012dd16a264bec811403a67ca9deb6c102fc5049b32c4574b35f"
 dependencies = [
- "hashbrown 0.17.1",
+ "hashbrown 0.16.1",
 ]
 
 [[package]]
@@ -2003,9 +2003,9 @@ dependencies = [
 
 [[package]]
 name = "libsqlite3-sys"
-version = "0.38.1"
+version = "0.37.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f6c19a05435c21ac299d71b6a9c13db3e3f47c520517d58990a462a1397a61db"
+checksum = "b1f111c8c41e7c61a49cd34e44c7619462967221a6443b0ec299e0ac30cfb9b1"
 dependencies = [
  "cc",
  "pkg-config",
@@ -2758,14 +2758,14 @@ dependencies = [
 
 [[package]]
 name = "rusqlite"
-version = "0.40.1"
+version = "0.39.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "11438310b19e3109b6446c33d1ed5e889428cf2e278407bc7896bc4aaea43323"
+checksum = "a0d2b0146dd9661bf67bb107c0bb2a55064d556eeb3fc314151b957f313bcd4e"
 dependencies = [
  "bitflags",
  "fallible-iterator",
  "fallible-streaming-iterator",
- "hashlink 0.12.1",
+ "hashlink 0.11.1",
  "libsqlite3-sys",
  "smallvec",
  "sqlite-wasm-rs",
@@ -2773,7 +2773,9 @@ dependencies = [
 
 [[package]]
 name = "rusqlite-ext"
-version = "0.40.0"
+version = "0.39.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e49e3d2072b68bc448084504f5c588bbc7fb3d48a1731500ef475b7b36d49962"
 dependencies = [
  "log",
  "rusqlite",
@@ -3195,6 +3197,8 @@ dependencies = [
 [[package]]
 name = "sqlite-chinese-stopword"
 version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "77258c64de848681fed269ed157edd2bf700dab372fbb975e00e71136cc452d4"
 dependencies = [
  "phf 0.13.1",
  "phf_codegen 0.13.1",
@@ -3203,6 +3207,8 @@ dependencies = [
 [[package]]
 name = "sqlite-english-stemmer"
 version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "94d672dcd353dd1f85ce755d3c88ca0e7e799ebd6a7d2391299cee9727b2f4c6"
 dependencies = [
  "unicode-normalization",
  "waken_snowball",
@@ -3211,6 +3217,8 @@ dependencies = [
 [[package]]
 name = "sqlite-simple-tokenizer"
 version = "0.6.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6c8d310d7790cb1c78d15afcce1f67f6ce0d2970b57647c90c78a38913bb24e0"
 dependencies = [
  "env_logger",
  "log",
