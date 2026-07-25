@@ -33,7 +33,3 @@ chrome_timeout_secs = 120 # 等待 CF 验证通过的最大时间
 passive_wait_secs = 2     # 被动等待 JS Challenge 自动解决
 click_interval_secs = 2   # Turnstile 点击尝试间隔
 headless = false          # Chrome 无头模式 (无 GUI 环境设为 true)
-
-# ─── 爬虫引擎（wisp 迁移期双开关）─────────────────────────────────────────────
-[engine]
-backend = "wisp"   # "wisp"（新）或 "legacy"（旧 BanzhuSpider 路径，已删除）

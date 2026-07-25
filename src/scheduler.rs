@@ -62,30 +62,15 @@ impl Scheduler {
         }
     }
 
-    /// 执行一次增量爬取：根据 `engine.backend` 配置选择 wisp / legacy 路径。
+    /// 执行一次增量爬取：基于 wisp 框架(legacy 路径已在 Task 1 删除)。
     pub async fn crawl_once(&self) -> Result<()> {
+        use crate::spider;
+
         let cron_enabled = self.config.get_bool("cron.enabled").unwrap_or(true);
         if !cron_enabled {
             info!("Cron is disabled, skipping crawl");
             return Ok(());
         }
-
-        let backend = self
-            .config
-            .get_string("engine.backend")
-            .unwrap_or_else(|_| "wisp".to_string());
-        match backend.as_str() {
-            "wisp" => self.crawl_once_wisp().await,
-            "legacy" => Err(anyhow::anyhow!(
-                "legacy 后端已删除，请使用 engine.backend = \"wisp\""
-            )),
-            other => Err(anyhow::anyhow!("未知 engine.backend: {other}")),
-        }
-    }
-
-    /// wisp 后端驱动的 crawl_once
-    async fn crawl_once_wisp(&self) -> Result<()> {
-        use crate::spider;
 
         let root_url = self
             .config
@@ -173,15 +158,15 @@ impl Scheduler {
         Ok(())
     }
 
-    /// 手动下载单本书（按网站 book_id），并写入爬取日志
+    /// 手动下载单本书（按网站 book_id）。暂未实现 wisp 单书爬取,请通过 crawl_once 触发全量爬取。
     pub async fn crawl_book(&self, website_book_id: u32) -> Result<()> {
         let _ = website_book_id;
-        Err(anyhow::anyhow!("正在迁移到 wisp，暂不可用"))
+        Err(anyhow::anyhow!("单书爬取暂未实现,请通过 crawl_once 触发全量爬取"))
     }
 
-    /// 重新爬取指定书籍（trigger=retry）
+    /// 重新爬取指定书籍（trigger=retry）。暂未实现,请通过 crawl_once 触发全量爬取。
     pub async fn retry_book(&self, website_book_id: u32) -> Result<()> {
         let _ = website_book_id;
-        Err(anyhow::anyhow!("正在迁移到 wisp，暂不可用"))
+        Err(anyhow::anyhow!("单书爬取暂未实现,请通过 crawl_once 触发全量爬取"))
     }
 }
