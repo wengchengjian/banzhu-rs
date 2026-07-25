@@ -14,6 +14,11 @@ lazy_static! {
     /// 书籍详情页分页正则（迁移自 task/mod.rs::PAGE_REGEX）
     pub(crate) static ref PAGE_REGEX: Regex =
         Regex::new(r"\(第(\d+?)/(?P<page>\d+?)页\)当前\d+?条/页").unwrap();
+    /// 章节分页文本中的页码提取正则（迁移自 task/mod.rs::SECTION_NUM_REGEX）
+    pub(crate) static ref SECTION_NUM_REGEX: Regex = Regex::new(r"【(?P<num>\d+?)】").unwrap();
+    /// 章节URL拆分正则（迁移自 task/mod.rs::SECTION_PAGE_REGEX）
+    pub(crate) static ref SECTION_PAGE_REGEX: Regex =
+        Regex::new(r"^(?P<left>.+?)/(?P<right>\d+?)\.html").unwrap();
 }
 
 /// 书籍元数据（迁移自 task/mod.rs::Book）
@@ -199,6 +204,71 @@ pub fn format_novel_content(content: &str) -> String {
     static RE: std::sync::OnceLock<Regex> = std::sync::OnceLock::new();
     let re = RE.get_or_init(|| Regex::new(r"[\r\n]+").unwrap());
     re.replace_all(content, "\n\n").to_string()
+}
+
+/// 解析章节列表页，提取所有 Chapter（迁移自 task/parse.rs::get_chapters_url 内部逻辑）。
+/// 取第二个 `.chapter-list` 元素下的 `.bd .list li a` 链接，构造 Chapter 列表并去重保序。
+pub fn parse_chapter_list(html: &str, root_url: &str) -> Result<Vec<Chapter>> {
+    let html = Html::parse_document(html);
+    let selector = Selector::parse(".chapter-list").map_err(|_| anyhow::anyhow!("CSS选择器错误"))?;
+    let a_selector =
+        Selector::parse(".bd .list li a").map_err(|_| anyhow::anyhow!("CSS选择器错误"))?;
+    let chapter_list = html.select(&selector).nth(1);
+
+    let mut chapters = vec![];
+    if let Some(chapter_list) = chapter_list {
+        for chapter in chapter_list.select(&a_selector) {
+            if let Some(href) = chapter.attr("href") {
+                if let Some(title) = chapter.text().next() {
+                    let url = format!("{}{}", root_url, href);
+                    chapters.push(Chapter::new(url, title.to_string()));
+                }
+            }
+        }
+    }
+    if !chapters.is_empty() {
+        chapters = arr_dup_rem_linked(chapters);
+    }
+    Ok(chapters)
+}
+
+/// 解析章节页，提取所有 Section URL（迁移自 task/parse.rs::get_sections_url 内部逻辑）。
+/// 从 `.chapterPages a` 文本中提取 `【num】` 取最大值作为分页数；无匹配时退化为 `<a>` 元素计数。
+/// 章节URL通过 SECTION_PAGE_REGEX 拆分为 `left/right`，生成 `left/right_1.html` … `left/right_N.html`。
+pub fn parse_section_urls(chapter_url: &str, html: &str) -> Result<Vec<Section>> {
+    let html = Html::parse_document(html);
+    let selector =
+        Selector::parse(".chapterPages a").map_err(|_| anyhow::anyhow!("html解析异常"))?;
+    let mut section_num = 1u8;
+    let max_sec_num: u8;
+    let mut sec_num_list = vec![];
+
+    for section_l in html.select(&selector) {
+        section_num += 1;
+        let text = section_l.text().next().unwrap_or("【0】");
+        if let Some(cap) = SECTION_NUM_REGEX.captures(text) {
+            if let Ok(num) = cap["num"].to_string().parse::<u8>() {
+                sec_num_list.push(num);
+            }
+        }
+    }
+    if let Some(&max) = sec_num_list.iter().max() {
+        max_sec_num = max;
+    } else {
+        max_sec_num = section_num;
+    }
+
+    let group = SECTION_PAGE_REGEX
+        .captures(chapter_url)
+        .ok_or_else(|| anyhow::anyhow!("章节URL格式异常: {}", chapter_url))?;
+    let left = group["left"].to_string();
+    let right = group["right"].to_string();
+
+    let mut sections: Vec<Section> = (1..=max_sec_num)
+        .map(|i| Section::new(format!("{}/{}_{}.html", left, right, i)))
+        .collect();
+    sections = arr_dup_rem_linked(sections);
+    Ok(sections)
 }
 
 #[cfg(test)]

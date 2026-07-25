@@ -1,0 +1,30 @@
+<!DOCTYPE html>
+<html><head><title>测试章节列表页</title></head>
+<body>
+<!-- 第一个 .chapter-list（最新章节，parse_chapter_list 会跳过） -->
+<div class="chapter-list">
+  <div class="bd">
+    <ul class="list">
+      <li><a href="/12/12345_1/23499.html">最新章节</a></li>
+    </ul>
+  </div>
+</div>
+
+<!-- 第二个 .chapter-list（完整章节列表，parse_chapter_list 取 .nth(1)） -->
+<div class="chapter-list">
+  <div class="bd">
+    <ul class="list">
+      <li><a href="/12/12345_1/23456.html">第1章 开始</a></li>
+      <li><a href="/12/12345_1/23457.html">第2章 继续</a></li>
+      <li><a href="/12/12345_1/23458.html">第3章 结束</a></li>
+    </ul>
+  </div>
+</div>
+
+<!-- 章节分页（parse_section_urls 解析 .chapterPages a 文本中的 【num】 取 max） -->
+<div class="chapterPages">
+  <a href="javascript:;">【1】</a>
+  <a href="javascript:;">【2】</a>
+  <a href="javascript:;">【3】</a>
+</div>
+</body></html>

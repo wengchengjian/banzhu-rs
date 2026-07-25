@@ -1,4 +1,6 @@
-use banzhu_spider::spider::parse::{clean_filename, parse_book_info};
+use banzhu_spider::spider::parse::{
+    arr_dup_rem_linked, clean_filename, parse_book_info, parse_chapter_list, parse_section_urls,
+};
 
 #[test]
 fn test_parse_book_info_extracts_all_fields() {
@@ -41,4 +43,30 @@ fn test_clean_filename_replaces_all_illegal_chars() {
 #[test]
 fn test_clean_filename_keeps_legal_name() {
     assert_eq!(clean_filename("正常书名"), "正常书名");
+}
+
+#[test]
+fn test_parse_chapter_list_returns_chapters() {
+    let html = std::fs::read_to_string("tests/fixtures/chapter_page.html").unwrap();
+    let chapters = parse_chapter_list(&html, "https://www.bz555555555.com").unwrap();
+    assert!(!chapters.is_empty());
+    let first = &chapters[0];
+    assert!(!first.title.is_empty());
+    assert!(first.url.starts_with("https://"));
+}
+
+#[test]
+fn test_parse_section_urls_returns_sections() {
+    // chapter URL 形如 https://www.bz555555555.com/12/12345_1/23456.html
+    let chapter_url = "https://www.bz555555555.com/12/12345_1/23456.html";
+    let html = std::fs::read_to_string("tests/fixtures/chapter_page.html").unwrap();
+    let sections = parse_section_urls(chapter_url, &html).unwrap();
+    assert!(!sections.is_empty());
+}
+
+#[test]
+fn test_arr_dup_rem_linked_removes_duplicates() {
+    let input = vec![1, 2, 2, 3, 3, 3, 4];
+    let result = arr_dup_rem_linked(input);
+    assert_eq!(result, vec![1, 2, 3, 4]);
 }
