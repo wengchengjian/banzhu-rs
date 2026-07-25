@@ -1066,6 +1066,15 @@ impl Database {
             .collect::<std::result::Result<Vec<_>, _>>()?;
         Ok(logs)
     }
+
+    /// 把所有 status='running' 的 crawl_tasks 标记为 'success'
+    pub fn mark_all_running_tasks_success(&self) -> Result<()> {
+        self.conn.execute(
+            "UPDATE crawl_tasks SET status = 'success', finished_at = unixepoch() WHERE status = 'running'",
+            [],
+        )?;
+        Ok(())
+    }
 }
 
 #[derive(Debug, Clone, serde::Serialize, Default)]

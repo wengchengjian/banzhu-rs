@@ -1,5 +1,5 @@
 use crate::db::Database;
-use crate::event::{CrawlEvent, EventBus};
+use crate::event::EventBus;
 use anyhow::Result;
 use config::Config;
 use log::info;
@@ -62,18 +62,115 @@ impl Scheduler {
         }
     }
 
-    /// 执行一次增量爬取（legacy 实现，待迁移到 wisp）
+    /// 执行一次增量爬取：根据 `engine.backend` 配置选择 wisp / legacy 路径。
     pub async fn crawl_once(&self) -> Result<()> {
-        let cron_enabled = self
-            .config
-            .get_bool("cron.enabled")
-            .unwrap_or(true);
+        let cron_enabled = self.config.get_bool("cron.enabled").unwrap_or(true);
         if !cron_enabled {
             info!("Cron is disabled, skipping crawl");
             return Ok(());
         }
-        // 旧 wreq5 爬虫已删除，等待 wisp 迁移
-        Err(anyhow::anyhow!("正在迁移到 wisp，暂不可用"))
+
+        let backend = self
+            .config
+            .get_string("engine.backend")
+            .unwrap_or_else(|_| "wisp".to_string());
+        match backend.as_str() {
+            "wisp" => self.crawl_once_wisp().await,
+            "legacy" => Err(anyhow::anyhow!(
+                "legacy 后端已删除，请使用 engine.backend = \"wisp\""
+            )),
+            other => Err(anyhow::anyhow!("未知 engine.backend: {other}")),
+        }
+    }
+
+    /// wisp 后端驱动的 crawl_once
+    async fn crawl_once_wisp(&self) -> Result<()> {
+        use crate::spider;
+
+        let root_url = self
+            .config
+            .get_string("root_url")
+            .map_err(|_| anyhow::anyhow!("spider.toml 未配置 root_url"))?;
+        let pages_limit: u32 = self.config.get_int("cron.pages_limit").unwrap_or(50) as u32;
+        let concurrency: usize = self.config.get_int("cron.book_concurrency").unwrap_or(4) as usize;
+        let proxy_url = self
+            .config
+            .get_string("spider.proxy.url")
+            .ok()
+            .filter(|s| !s.is_empty())
+            .filter(|_| self.config.get_bool("spider.proxy.enabled").unwrap_or(false));
+
+        let img_dict = Arc::new(spider::init_img_fanpa_dict());
+        let font_dict = Arc::new(spider::init_font_fanpa_dict());
+
+        // 初始化 status
+        {
+            let mut s = self.status.lock().await;
+            s.running = true;
+            s.current_page = 0;
+            s.pages_limit = pages_limit;
+            s.books_found = 0;
+            s.books_downloaded = 0;
+            s.books_failed = 0;
+            s.books_skipped = 0;
+            s.message = "wisp 后端：开始爬取".to_string();
+        }
+
+        let spider = spider::build_spider(
+            root_url.clone(),
+            pages_limit,
+            self.db.clone(),
+            self.config.clone(),
+            self.event_bus.clone(),
+            self.status.clone(),
+            img_dict,
+            font_dict,
+        );
+
+        let mut engine_builder = wisp::crawl::Engine::infra()
+            .max_concurrent(concurrency)
+            .max_pages(pages_limit as usize)
+            .download_delay(std::time::Duration::from_millis(500))
+            .obey_robots(false)
+            .fetch_mode(wisp::fetcher::FetchMode::Auto);
+
+        if let Some(proxy) = proxy_url.as_deref() {
+            engine_builder = engine_builder.proxy(proxy);
+        }
+
+        let engine = engine_builder.build()?;
+
+        let (stats, _items) = engine.run(spider).await?;
+
+        // 事后批量标记：所有 running 任务标 success
+        {
+            let db = self.db.lock().await;
+            let _ = db.mark_all_running_tasks_success();
+        }
+
+        // 状态更新与事件发射（先 clone 再 emit，避免持有锁）
+        let final_status = {
+            let mut s = self.status.lock().await;
+            s.running = false;
+            s.last_run = chrono::Local::now()
+                .format("%Y-%m-%d %H:%M:%S")
+                .to_string();
+            s.message = format!("wisp 爬取完成: {}", stats.summary());
+            s.clone()
+        };
+
+        self.event_bus.emit(crate::event::CrawlEvent::Status {
+            running: final_status.running,
+            current_page: final_status.current_page as i64,
+            pages_limit: final_status.pages_limit as i64,
+            books_found: final_status.books_found as i64,
+            books_downloaded: final_status.books_downloaded as i64,
+            books_failed: final_status.books_failed as i64,
+            books_skipped: final_status.books_skipped as i64,
+            message: final_status.message,
+        });
+
+        Ok(())
     }
 
     /// 手动下载单本书（按网站 book_id），并写入爬取日志
