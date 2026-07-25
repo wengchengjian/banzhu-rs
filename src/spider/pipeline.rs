@@ -160,6 +160,7 @@ pub fn build_banzhu_pipeline(
                     }
                     Err(e) => {
                         log::error!("batch_upsert_books failed: {e}");
+                        status.lock().await.books_failed += books.len() as u32;
                         failed_website_ids.extend(books.iter().filter_map(|b| b.website_book_id));
                     }
                 }
@@ -167,12 +168,14 @@ pub fn build_banzhu_pipeline(
             if !chapters.is_empty() {
                 if let Err(e) = db_guard.batch_upsert_chapters(&chapters) {
                     log::error!("batch_upsert_chapters failed: {e}");
+                    status.lock().await.books_failed += chapters.len() as u32;
                     failed_website_ids.extend(chapters.iter().map(|(wid, _)| *wid));
                 }
             }
             if !sections.is_empty() {
                 if let Err(e) = db_guard.batch_upsert_sections(&sections) {
                     log::error!("batch_upsert_sections failed: {e}");
+                    status.lock().await.books_failed += sections.len() as u32;
                     failed_website_ids.extend(sections.iter().map(|(wid, _, _)| *wid));
                 }
             }
@@ -184,7 +187,7 @@ pub fn build_banzhu_pipeline(
 
             let s = status.lock().await.clone();
             event_bus.emit(CrawlEvent::Status {
-                running: true,
+                running: s.running,
                 current_page: s.current_page as i64,
                 pages_limit: s.pages_limit as i64,
                 books_found: s.books_found as i64,
