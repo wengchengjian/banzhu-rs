@@ -73,18 +73,18 @@ impl Scheduler {
             return Ok(());
         }
         // 旧 wreq5 爬虫已删除，等待 wisp 迁移
-        unimplemented!("migrating to wisp")
+        Err(anyhow::anyhow!("正在迁移到 wisp，暂不可用"))
     }
 
     /// 手动下载单本书（按网站 book_id），并写入爬取日志
     pub async fn crawl_book(&self, website_book_id: u32) -> Result<()> {
         let _ = website_book_id;
-        unimplemented!("migrating to wisp")
+        Err(anyhow::anyhow!("正在迁移到 wisp，暂不可用"))
     }
 
     /// 重新爬取指定书籍（trigger=retry）
     pub async fn retry_book(&self, website_book_id: u32) -> Result<()> {
         let _ = website_book_id;
-        unimplemented!("migrating to wisp")
+        Err(anyhow::anyhow!("正在迁移到 wisp，暂不可用"))
     }
 }
