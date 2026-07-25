@@ -40,12 +40,6 @@ impl Display for SpiderError {
 
 impl StdError for SpiderError {}
 
-impl From<wreq::Error> for SpiderError {
-    fn from(err: wreq::Error) -> Self {
-        SpiderError::RequestError(err.to_string())
-    }
-}
-
 impl From<std::io::Error> for SpiderError {
     fn from(err: std::io::Error) -> Self {
         SpiderError::FileError(err.to_string())

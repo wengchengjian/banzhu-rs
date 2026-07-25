@@ -1,5 +1,4 @@
 use crate::appconfig;
-use crate::banzhuspider::BanzhuSpider;
 use crate::db::Database;
 use crate::scheduler::Scheduler;
 use axum::{
@@ -213,15 +212,13 @@ pub async fn run_web() -> anyhow::Result<()> {
         .get_string("root_url")
         .unwrap_or_else(|_| "https://www.bz11111111.com/".to_string());
     log::info!("目标站点: {}", root_url);
-    log::info!("定时爬取: enabled={}, schedule={}", 
+    log::info!("定时爬取: enabled={}, schedule={}",
         config.get_bool("cron.enabled").unwrap_or(true),
         config.get_string("cron.schedule").unwrap_or_else(|_| "0 */6 * * *".into()));
 
-    let spider = Arc::new(BanzhuSpider::new_with_probe(root_url, config.clone()).await);
-
+    // 旧 wreq5 BanzhuSpider 已删除，待迁移到 wisp 框架后在此重建 spider。
     let event_bus = crate::event::EventBus::new(256);
     let scheduler = Arc::new(Scheduler::new(
-        spider,
         db.clone(),
         config.clone(),
         event_bus.clone(),
