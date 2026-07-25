@@ -26,13 +26,6 @@ enabled = true                # 是否启用定时爬取
 schedule = "0 */6 * * *"      # cron 表达式
 pages_limit = 50              # 单次最多爬取列表页数
 book_concurrency = 4          # 书籍并发下载数
-
-[cf_bypass]
-cookie_ttl_secs = 1200        # cf_clearance 缓存有效期
-chrome_timeout_secs = 120     # 等待 CF 验证通过的最大时间
-passive_wait_secs = 2         # 被动等待 JS Challenge 自动解决
-click_interval_secs = 2       # Turnstile 点击尝试间隔
-headless = false              # Chrome 无头模式
 ```
 
 ## 各节说明
@@ -68,7 +61,7 @@ headless = false              # Chrome 无头模式
 - HTTPS: `https://proxy.example.com:8080`
 - SOCKS5: `socks5://127.0.0.1:1080`
 
-启用代理后，所有 HTTP 请求（包括 CF 验证后的数据请求）都会通过代理发出。Chrome 浏览器的 CF 验证不走此代理（走系统代理）。
+启用代理后，所有 HTTP 请求（包括 wisp Auto 模式的浏览器请求）都会通过代理发出。
 
 ### `[cron]`
 
@@ -83,23 +76,6 @@ headless = false              # Chrome 无头模式
 - `0 */6 * * *` — 每 6 小时
 - `0 2 * * *` — 每天凌晨 2 点
 - `0 */30 * * * *` — 每 30 分钟（6 位，含秒）
-
-### `[cf_bypass]`
-
-| 键 | 类型 | 默认值 | 说明 |
-|---|---|---|---|
-| `cookie_ttl_secs` | int | 1200 | cf_clearance cookie 缓存时间（秒） |
-| `chrome_timeout_secs` | int | 120 | 等待 CF 验证通过的最大时间 |
-| `passive_wait_secs` | int | 2 | 页面加载后被动等待时间 |
-| `click_interval_secs` | int | 2 | Turnstile 点击重试间隔 |
-| `headless` | bool | false | 是否使用 Chrome 无头模式 |
-
-**关于 `headless`：**
-- `false`（默认）：弹出 Chrome 窗口，可靠性最高
-- `true`：无窗口，适合服务器环境，但可能被 CF 检测到
-
-**关于 `cookie_ttl_secs`：**
-Cloudflare 的 cf_clearance 通常 15-30 分钟过期。设为 1200（20 分钟）是安全值。如果频繁遇到 CF 验证，可以降低此值。
 
 ## 用户配置（~/.banzhu/config.toml）
 

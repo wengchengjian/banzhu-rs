@@ -6,53 +6,48 @@ Rust 小说爬虫，自动绕过 Cloudflare Turnstile 验证，支持增量爬�
 
 ```
 banzhu-rs/                        ← Cargo 项目根
-├── Cargo.toml                    ← 项目依赖与元数据
+├── Cargo.toml                    ← 项目依赖与元数据 (wisp path 依赖)
 ├── spider.toml                   ← 运行时配置
 ├── src/
-│   ├── cf/                       ← Cloudflare 绕过
-│   │   ├── mod.rs                ← CfManager (singleflight cookie 管理)
-│   │   └── turnstile.rs          ← CDP 穿透 shadow DOM + 模拟点击
-│   ├── task/                     ← 下载任务
-│   │   ├── mod.rs                ← 下载流程编排
-│   │   ├── parse.rs              ← HTML 结构解析
-│   │   └── content.rs            ← 正文提取 + 反爬解密
+│   ├── spider/                   ← 爬虫模块 (wisp 驱动)
+│   │   ├── mod.rs                ← build_spider 组装 (SpiderBuilder + 5 callbacks)
+│   │   ├── parse.rs              ← HTML 结构解析 + 反爬解密
+│   │   ├── stop.rs               ← EmptyPageTracker (停止条件)
+│   │   ├── pipeline.rs           ← BatchItemPipeline (批量写 DB)
+│   │   └── callbacks.rs          ← 5 个 callback 工厂函数
 │   ├── db/                       ← 数据层 (SQLite)
 │   │   ├── mod.rs                ← 连接管理
 │   │   ├── schema.rs             ← DDL + 迁移
 │   │   ├── models.rs             ← 数据模型
-│   │   ├── crud.rs               ← 增删改查
+│   │   ├── crud.rs               ← 增删改查 + batch_upsert
 │   │   └── fts.rs                ← FTS5 全文索引
 │   ├── web/                      ← REST API (Axum)
 │   │   ├── mod.rs                ← 路由 + 优雅关闭
 │   │   ├── books.rs              ← 书籍接口
 │   │   ├── search.rs             ← 搜索接口
 │   │   └── crawl.rs              ← 爬取控制
-│   ├── banzhuspider.rs           ← 爬虫核心 (wreq Chrome137 指纹)
-│   ├── scheduler.rs              ← 定时增量爬取
+│   ├── scheduler.rs              ← 定时增量爬取 (wisp Engine 驱动)
 │   ├── search.rs                 ← 中文分词 + BM25
+│   ├── event.rs                  ← EventBus
 │   ├── crypto.rs                 ← RC4/AES 解密
 │   └── appconfig.rs              ← 用户配置
-└── examples/
-    ├── smoke_test.rs             ← 冒烟测试
-    └── download_book.rs          ← 单本下载示例
 ```
 
 ## 核心技术
 
 | 层级 | 方案 |
 |------|------|
-| TLS 指纹 | wreq Chrome137 模拟 (JA3/JA4) |
-| CF 验证 | stealth Chrome + CDP 穿透 closed shadow DOM + Turnstile 点击 |
-| Cookie 管理 | singleflight (RwLock + refresh_lock)，20 分钟 TTL 自动刷新 |
+| TLS 指纹 | wisp HTTP 客户端 (Chrome 指纹) |
+| CF 验证 | wisp FetchMode::Auto (HTTP → Dynamic → Stealth 逐请求升级) |
 | 反爬对抗 | 图片字体映射 + RC4/AES 解密 + GBK 编码处理 |
-| 并发模型 | tokio async + buffer_unordered，章节 8 并发，书籍 4 并发 |
+| 并发模型 | wisp Engine (tokio async, max_concurrent 可配) |
 | 存储 | SQLite WAL + FTS5 全文搜索 (BM25) |
 
 ## 环境要求
 
 - Rust 1.75+
-- Chrome/Chromium (用于 CF 验证)
-- Windows / macOS / Linux (需 GUI 环境)
+- wisp (本地 path 依赖 ../wisp)
+- Windows / macOS / Linux
 
 ## 快速开始
 
@@ -62,12 +57,6 @@ cargo build
 
 # 启动 API 服务 (端口 3000)
 cargo run
-
-# 冒烟测试 (验证 CF 绕过 + 下载链路)
-cargo run --example smoke_test
-
-# 下载单本书
-cargo run --example download_book
 ```
 
 ## 配置
@@ -101,7 +90,7 @@ pages_limit = 50
 
 ```bash
 cargo test                  # 单元测试
-cargo run --example smoke_test  # 端到端冒烟测试
+cargo test --test wisp_engine_integration  # 端到端集成测试
 ```
 
 ## License
