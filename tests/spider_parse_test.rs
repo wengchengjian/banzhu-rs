@@ -100,14 +100,12 @@ fn test_needs_section_post_detects_pattern() {
 fn test_try_section_data3_decrypts_ns_content() {
     let html = std::fs::read_to_string("tests/fixtures/section_data3.html").unwrap();
     let result = try_section_data3(&html);
-    // 即使解密失败也不应 panic，结果可能为空字符串
-    if let Ok(content) = result {
-        let _ = content;
-    }
+    assert!(result.is_ok(), "try_section_data3 应返回 Ok（即便内容为空），实际: {:?}", result.err());
 }
 
 #[test]
 fn test_try_section_data4_decrypts_cipher() {
     let html = std::fs::read_to_string("tests/fixtures/section_data4.html").unwrap();
-    let _ = try_section_data4(&html);
+    let result = try_section_data4(&html);
+    assert!(result.is_err(), "无效密文应返回 Err，实际: {:?}", result.unwrap());
 }
