@@ -1,4 +1,4 @@
-use banzhu_spider::db::{BookRecord, Database};
+use banzhu_spider::db::{BookRecord, ChapterRecord, Database, SectionRecord};
 
 fn make_book(website_id: i64, title: &str) -> BookRecord {
     BookRecord {
@@ -37,4 +37,41 @@ fn test_batch_upsert_books_replaces_existing() {
     let book = db.get_book_by_website_id(1001).unwrap().unwrap();
     assert_eq!(book.title, "新标题");
     assert_eq!(book.website_book_id, Some(1001));
+}
+
+#[test]
+fn test_batch_upsert_chapters_via_website_id_join() {
+    let db = Database::open_in_memory().unwrap();
+    db.batch_upsert_books(&[make_book(1001, "书1")]).unwrap();
+
+    let chapters = vec![
+        (1001_i64, ChapterRecord {
+            id: 0, book_id: 0, title: "第1章".to_string(),
+            url: "https://x/1".to_string(), chapter_order: 1, word_count: 0,
+        }),
+        (1001_i64, ChapterRecord {
+            id: 0, book_id: 0, title: "第2章".to_string(),
+            url: "https://x/2".to_string(), chapter_order: 2, word_count: 0,
+        }),
+    ];
+    let n = db.batch_upsert_chapters(&chapters).unwrap();
+    assert_eq!(n, 2);
+}
+
+#[test]
+fn test_batch_upsert_sections_via_join() {
+    let db = Database::open_in_memory().unwrap();
+    db.batch_upsert_books(&[make_book(1001, "书1")]).unwrap();
+    db.batch_upsert_chapters(&[
+        (1001, ChapterRecord { id: 0, book_id: 0, title: "第1章".into(), url: "u".into(), chapter_order: 1, word_count: 0 }),
+    ]).unwrap();
+
+    let sections = vec![
+        (1001_i64, 1_i64, SectionRecord {
+            id: 0, chapter_id: 0, book_id: 0, url: "https://x/s1".into(),
+            content: "内容1".into(), section_order: 1,
+        }),
+    ];
+    let n = db.batch_upsert_sections(&sections).unwrap();
+    assert_eq!(n, 1);
 }

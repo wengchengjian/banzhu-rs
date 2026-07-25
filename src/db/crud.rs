@@ -526,6 +526,46 @@ impl Database {
         Ok(count)
     }
 
+    /// 批量 upsert 章节记录。
+    /// chapters: Vec<(website_book_id, ChapterRecord)> —— 方法内部 JOIN books 解析 book_id
+    pub fn batch_upsert_chapters(&self, chapters: &[(i64, ChapterRecord)]) -> Result<usize> {
+        let tx = self.conn.unchecked_transaction()?;
+        let mut count = 0;
+        for (website_book_id, ch) in chapters {
+            tx.execute(
+                "INSERT OR REPLACE INTO chapters (book_id, title, url, chapter_order, word_count)
+                 SELECT b.id, ?1, ?2, ?3, ?4
+                 FROM books b
+                 WHERE b.website_book_id = ?5",
+                params![ch.title, ch.url, ch.chapter_order, ch.word_count, website_book_id],
+            )?;
+            count += 1;
+        }
+        tx.commit()?;
+        Ok(count)
+    }
+
+    /// 批量 upsert section 记录。
+    /// sections: Vec<(website_book_id, chapter_order, SectionRecord)> ——
+    /// 方法内部 JOIN books + chapters 解析 chapter_id 和 book_id
+    pub fn batch_upsert_sections(&self, sections: &[(i64, i64, SectionRecord)]) -> Result<usize> {
+        let tx = self.conn.unchecked_transaction()?;
+        let mut count = 0;
+        for (website_book_id, chapter_order, sec) in sections {
+            tx.execute(
+                "INSERT OR REPLACE INTO sections (chapter_id, book_id, url, content, section_order)
+                 SELECT c.id, c.book_id, ?1, ?2, ?3
+                 FROM chapters c
+                 JOIN books b ON b.id = c.book_id
+                 WHERE b.website_book_id = ?4 AND c.chapter_order = ?5",
+                params![sec.url, sec.content, sec.section_order, website_book_id, chapter_order],
+            )?;
+            count += 1;
+        }
+        tx.commit()?;
+        Ok(count)
+    }
+
     // ─── Bookshelf CRUD ──────────────────────────────────────────────────────
 
     pub fn add_to_bookshelf(&self, book_id: i64, group: &str) -> Result<()> {
