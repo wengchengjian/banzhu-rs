@@ -14,7 +14,7 @@ request_timeout_secs = 15 # 单次请求超时
 
 # ─── 代理 ─────────────────────────────────────────────────────────────────────
 [spider.proxy]
-enabled = true
+enabled = false
 # 支持 http/https/socks5 协议
 # 示例: "http://127.0.0.1:7890" 或 "socks5://127.0.0.1:1080"
 url = "http://127.0.0.1:7897"
@@ -25,11 +25,3 @@ enabled = true
 schedule = "0 */6 * * *" # cron 表达式：每 6 小时
 pages_limit = 50         # 单次最多爬取列表页数
 book_concurrency = 4     # 书籍并发下载数
-
-# ─── Cloudflare 绕过 ──────────────────────────────────────────────────────────
-[cf_bypass]
-cookie_ttl_secs = 1200    # cf_clearance 缓存有效期 (默认 20 分钟)
-chrome_timeout_secs = 120 # 等待 CF 验证通过的最大时间
-passive_wait_secs = 2     # 被动等待 JS Challenge 自动解决
-click_interval_secs = 2   # Turnstile 点击尝试间隔
-headless = false          # Chrome 无头模式 (无 GUI 环境设为 true)

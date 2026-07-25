@@ -4415,7 +4415,6 @@ dependencies = [
  "parking_lot",
  "rand 0.10.2",
  "regex",
- "rusqlite",
  "scraper 0.27.0",
  "serde",
  "serde_json",
@@ -4432,6 +4431,7 @@ dependencies = [
  "which",
  "wreq",
  "wreq-util",
+ "zip",
 ]
 
 [[package]]

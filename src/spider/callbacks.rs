@@ -33,6 +33,7 @@ pub fn list_handler(
     move |resp| {
         let tracker = tracker.clone();
         Box::pin(async move {
+            let url_for_log = resp.url.clone();
             let doc = resp.parse();
             let mut follows = Vec::new();
             let mut found_any = false;
@@ -69,6 +70,21 @@ pub fn list_handler(
             if found_any {
                 tracker.record_non_empty();
             } else {
+                // 诊断：打印页面 title 和 body 前 400 字符，定位解析失败原因
+                let title = doc.select_one("title").map(|t| t.text()).unwrap_or_default();
+                let body_preview = doc
+                    .select_one("body")
+                    .map(|b| {
+                        let t = b.text();
+                        t.chars().take(400).collect::<String>()
+                    })
+                    .unwrap_or_default();
+                log::warn!(
+                    "list_handler 解析为空: url={}, title='{}', body前400字符={:?}",
+                    url_for_log,
+                    title.trim(),
+                    body_preview
+                );
                 tracker.record_empty();
             }
             (Vec::new(), follows)

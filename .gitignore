@@ -13,3 +13,4 @@ frontend/dist/
 .superpowers/
 docs/
 spider.toml
+.browsers/
