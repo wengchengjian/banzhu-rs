@@ -49,10 +49,10 @@ fn test_clean_filename_keeps_legal_name() {
 fn test_parse_chapter_list_returns_chapters() {
     let html = std::fs::read_to_string("tests/fixtures/chapter_page.html").unwrap();
     let chapters = parse_chapter_list(&html, "https://www.bz555555555.com").unwrap();
-    assert!(!chapters.is_empty());
+    assert_eq!(chapters.len(), 3);
     let first = &chapters[0];
-    assert!(!first.title.is_empty());
-    assert!(first.url.starts_with("https://"));
+    assert_eq!(first.title, "第1章 开始");
+    assert_eq!(first.url, "https://www.bz555555555.com/12/12345_1/23456.html");
 }
 
 #[test]
@@ -61,7 +61,9 @@ fn test_parse_section_urls_returns_sections() {
     let chapter_url = "https://www.bz555555555.com/12/12345_1/23456.html";
     let html = std::fs::read_to_string("tests/fixtures/chapter_page.html").unwrap();
     let sections = parse_section_urls(chapter_url, &html).unwrap();
-    assert!(!sections.is_empty());
+    assert_eq!(sections.len(), 3);
+    assert_eq!(sections[0].url, "https://www.bz555555555.com/12/12345_1/23456_1.html");
+    assert_eq!(sections[2].url, "https://www.bz555555555.com/12/12345_1/23456_3.html");
 }
 
 #[test]
