@@ -1,11 +1,14 @@
 //! banzhu 站点解析自由函数（从 task/parse.rs + content.rs 迁移，去 &self 依赖）。
 //! 所有公开函数只接受 &str，内部用 scraper::Html 解析。
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::fmt::{Display, Formatter};
 use std::hash::Hash;
+use std::ops::Deref;
 
 use anyhow::Result;
+use encoding::all::GBK;
+use encoding::{DecoderTrap, Encoding};
 use lazy_static::lazy_static;
 use regex::Regex;
 use scraper::{Html, Selector};
@@ -19,6 +22,18 @@ lazy_static! {
     /// 章节URL拆分正则（迁移自 task/mod.rs::SECTION_PAGE_REGEX）
     pub(crate) static ref SECTION_PAGE_REGEX: Regex =
         Regex::new(r"^(?P<left>.+?)/(?P<right>\d+?)\.html").unwrap();
+    /// 策略2：检测 $.post form 拉取正文模式（迁移自 task/content.rs）
+    pub(crate) static ref SECTION_DATA_REGEX2: Regex =
+        Regex::new(r#"\$\.post\('',\{'j':'1'\},function\(e\)"#).unwrap();
+    /// 策略3：var ns='...' base64 索引数组（迁移自 task/content.rs）
+    pub(crate) static ref SECTION_DATA_REGEX3: Regex = Regex::new(r#"var ns='(?P<ns>.+?)'"#).unwrap();
+    /// 策略4：var chapter = secret(cipher, code, ...) AES 密文（迁移自 task/content.rs）
+    pub(crate) static ref SECTION_DATA_REGEX4: Regex = Regex::new(
+        r#"(?s)var chapter = secret\(\s*["'](?P<cipher>.+?)["'],\s*["'](?P<code>.+?)["'],.+?\);"#,
+    )
+    .unwrap();
+    /// 图片反爬 URL 提取正则（迁移自 task/content.rs）
+    pub(crate) static ref IMG_PANFA_REGEX: Regex = Regex::new(r"/toimg/data/(?P<url>.+?.png)").unwrap();
 }
 
 /// 书籍元数据（迁移自 task/mod.rs::Book）
@@ -269,6 +284,111 @@ pub fn parse_section_urls(chapter_url: &str, html: &str) -> Result<Vec<Section>>
         .collect();
     sections = arr_dup_rem_linked(sections);
     Ok(sections)
+}
+
+/// 策略 1：直接从 `.page-content p` 提取并字典反爬（迁移自 task/content.rs）。
+pub fn try_section_data1(
+    html_str: &str,
+    font_dict: &HashMap<String, String>,
+    img_dict: &HashMap<String, String>,
+) -> Result<String> {
+    format_content_html(None, Some(html_str), font_dict, img_dict)
+}
+
+/// 策略 2 信号：检测页面是否需要 POST form 拉取正文（迁移自 task/content.rs）。
+/// 返回 true 表示需要 follow 到 section_post 处理（具体 Request 由 callback 构造）。
+pub fn needs_section_post(html_str: &str) -> bool {
+    SECTION_DATA_REGEX2.is_match(html_str)
+}
+
+/// 策略 3：`var ns='...'` 索引重排解密（迁移自 task/content.rs）。
+/// 解密失败或无匹配时返回空字符串。
+pub fn try_section_data3(html_str: &str) -> Result<String> {
+    if let Some(cap) = SECTION_DATA_REGEX3.captures(html_str) {
+        let ns = &cap["ns"];
+        if let Some(content) = crate::crypto::decrypt_section_data(html_str, ns) {
+            if !content.is_empty() {
+                return Ok(content);
+            }
+        }
+    }
+    Ok(String::new())
+}
+
+/// 策略 4：`var chapter = secret(cipher, code, ...)` AES 解密（迁移自 task/content.rs）。
+/// 解密后的字节流优先按 UTF-8 解码，失败则回退到 GBK，再失败用 lossy 转换。
+pub fn try_section_data4(html_str: &str) -> Result<String> {
+    if let Some(cap) = SECTION_DATA_REGEX4.captures(html_str) {
+        let cipher_text = &cap["cipher"];
+        let code = &cap["code"];
+        let content = crate::decrpyt_aes_128_cbc(cipher_text.as_bytes(), code.as_bytes())?;
+        let content = String::from_utf8(content).unwrap_or_else(|e| {
+            let arr = e.into_bytes();
+            GBK.decode(&arr, DecoderTrap::Replace)
+                .unwrap_or_else(|_| String::from_utf8_lossy(&arr).to_string())
+        });
+        return Ok(content);
+    }
+    Ok(String::new())
+}
+
+/// 字体/图片反爬 + 格式化（迁移自 task/content.rs::format_content）。
+/// `html_str` 与 `html_text` 任一为 Some 即可解析；两者都为 None 返回错误。
+pub fn format_content_html(
+    html_str: Option<&str>,
+    html_text: Option<&str>,
+    font_dict: &HashMap<String, String>,
+    img_dict: &HashMap<String, String>,
+) -> Result<String> {
+    let parsed = match (html_str, html_text) {
+        (Some(s), _) => Html::parse_document(s),
+        (_, Some(s)) => Html::parse_document(s),
+        _ => return Err(anyhow::anyhow!("参数错误")),
+    };
+
+    let nodes = parsed
+        .select(&Selector::parse(".page-content p").map_err(|_| anyhow::anyhow!("html解析失败"))?)
+        .next()
+        .ok_or_else(|| anyhow::anyhow!("没有page-content节点"))?
+        .descendants();
+
+    let mut content = String::new();
+    for node in nodes {
+        if node.value().is_text() {
+            if let Some(text) = node.value().as_text() {
+                let word = text.deref();
+                if word.len() == 3 {
+                    let uni_word = char_to_unicode(word.chars().next().unwrap());
+                    if let Some(w) = font_dict.get(&uni_word) {
+                        content.push_str(w);
+                    } else {
+                        content.push_str(word);
+                    }
+                } else {
+                    content.push_str(word);
+                }
+            }
+        } else if node.value().is_element() {
+            if let Some(element) = node.value().as_element() {
+                match element.name() {
+                    "br" => content.push('\n'),
+                    "img" => {
+                        if let Some(src) = element.attr("src") {
+                            if let Some(cap) = IMG_PANFA_REGEX.captures(src) {
+                                let url = &cap["url"];
+                                if let Some(w) = img_dict.get(url) {
+                                    content.push_str(w);
+                                }
+                            }
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        }
+    }
+    content = format_novel_content(&content);
+    Ok(content)
 }
 
 #[cfg(test)]

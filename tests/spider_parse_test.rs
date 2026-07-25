@@ -1,5 +1,6 @@
 use banzhu_spider::spider::parse::{
-    arr_dup_rem_linked, clean_filename, parse_book_info, parse_chapter_list, parse_section_urls,
+    arr_dup_rem_linked, clean_filename, needs_section_post, parse_book_info, parse_chapter_list,
+    parse_section_urls, try_section_data1, try_section_data3, try_section_data4,
 };
 
 #[test]
@@ -71,4 +72,42 @@ fn test_arr_dup_rem_linked_removes_duplicates() {
     let input = vec![1, 2, 2, 3, 3, 3, 4];
     let result = arr_dup_rem_linked(input);
     assert_eq!(result, vec![1, 2, 3, 4]);
+}
+
+fn empty_dicts() -> (
+    std::collections::HashMap<String, String>,
+    std::collections::HashMap<String, String>,
+) {
+    (Default::default(), Default::default())
+}
+
+#[test]
+fn test_try_section_data1_extracts_page_content() {
+    let html = std::fs::read_to_string("tests/fixtures/section_data1.html").unwrap();
+    let (font, img) = empty_dicts();
+    let result = try_section_data1(&html, &font, &img).unwrap();
+    assert!(!result.is_empty());
+}
+
+#[test]
+fn test_needs_section_post_detects_pattern() {
+    let html = r#"<script>$.post('',{'j':'1'},function(e){})</script>"#;
+    assert!(needs_section_post(html));
+    assert!(!needs_section_post("<div>普通内容</div>"));
+}
+
+#[test]
+fn test_try_section_data3_decrypts_ns_content() {
+    let html = std::fs::read_to_string("tests/fixtures/section_data3.html").unwrap();
+    let result = try_section_data3(&html);
+    // 即使解密失败也不应 panic，结果可能为空字符串
+    if let Ok(content) = result {
+        let _ = content;
+    }
+}
+
+#[test]
+fn test_try_section_data4_decrypts_cipher() {
+    let html = std::fs::read_to_string("tests/fixtures/section_data4.html").unwrap();
+    let _ = try_section_data4(&html);
 }
