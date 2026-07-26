@@ -91,10 +91,10 @@ impl Scheduler {
         let concurrency: usize = self.config.get_int("cron.book_concurrency").unwrap_or(4) as usize;
         let proxy_url = self
             .config
-            .get_string("spider.proxy.url")
+            .get_string("wisp.proxy.url")
             .ok()
             .filter(|s| !s.is_empty())
-            .filter(|_| self.config.get_bool("spider.proxy.enabled").unwrap_or(false));
+            .filter(|_| self.config.get_bool("wisp.proxy.enabled").unwrap_or(false));
 
         let img_dict = Arc::new(spider::init_img_fanpa_dict());
         let font_dict = Arc::new(spider::init_font_fanpa_dict());
@@ -127,21 +127,28 @@ impl Scheduler {
             .max_concurrent(concurrency)
             // max_pages 是引擎级总页数上限（列表页+详情页+章节页）
             // pages_limit 只控制列表页数量，由 spider start_urls 决定
-            // 设置为 pages_limit * 100 以允许详情页和章节页被处理
-            .max_pages(pages_limit as usize * 100)
-            .download_delay(std::time::Duration::from_millis(500))
-            .obey_robots(false)
+            .max_pages(self.config.get_int("wisp.max_pages").unwrap_or(5000) as usize)
+            .download_delay(std::time::Duration::from_millis(
+                self.config.get_int("wisp.download_delay_ms").unwrap_or(500) as u64,
+            ))
+            .obey_robots(self.config.get_bool("wisp.obey_robots").unwrap_or(false))
             .fetch_mode(wisp::fetcher::FetchMode::Auto);
 
         if let Some(proxy) = proxy_url.as_deref() {
             engine_builder = engine_builder.proxy(proxy);
         }
 
-        // 配置 headless 模式（false = 可见浏览器，用于绕过 CF 检测）
-        let headless = self.config.get_bool("spider.headless").unwrap_or(true);
+        // 配置 stealth/浏览器参数
+        let headless = self.config.get_bool("wisp.stealth.headless").unwrap_or(false);
+        let challenge_timeout = self.config.get_int("wisp.stealth.challenge_timeout_secs").unwrap_or(60) as u64;
+        let human_mode = self.config.get_bool("wisp.stealth.human_mode").unwrap_or(true);
+        let cf_ttl = self.config.get_int("wisp.stealth.cf_cookie_ttl_secs").unwrap_or(1800) as u64;
+
         let mut fetch_config = wisp::fetcher::FetchClientConfig::default();
         fetch_config.headless = headless;
-        fetch_config.challenge_timeout = std::time::Duration::from_secs(60);
+        fetch_config.challenge_timeout = std::time::Duration::from_secs(challenge_timeout);
+        fetch_config.human_mode = human_mode;
+        fetch_config.cf_cookie_ttl = std::time::Duration::from_secs(cf_ttl);
         if let Some(proxy) = proxy_url.as_deref() {
             fetch_config.proxy = Some(proxy.to_string());
         }

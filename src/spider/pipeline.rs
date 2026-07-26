@@ -25,6 +25,7 @@ pub fn partition_items(
     let mut books = vec![];
     let mut chapters = vec![];
     let mut sections = vec![];
+    let mut unmatched = 0u32;
 
     for item in items {
         match item.get("type").and_then(|v| v.as_str()) {
@@ -128,8 +129,20 @@ pub fn partition_items(
                 };
                 sections.push((website_book_id, chapter_order, section));
             }
-            _ => {}
+            _ => {
+                unmatched += 1;
+                if unmatched <= 3 {
+                    log::warn!(
+                        "[pipeline] partition: 未识别的 item type={:?}, keys={:?}",
+                        item.get("type"),
+                        item.as_object().map(|o| o.keys().collect::<Vec<_>>())
+                    );
+                }
+            }
         }
+    }
+    if unmatched > 0 {
+        log::warn!("[pipeline] partition: 共 {} 条 items 未匹配任何 type", unmatched);
     }
     (books, chapters, sections)
 }
@@ -143,41 +156,74 @@ pub fn build_banzhu_pipeline(
     event_bus: EventBus,
     status: Arc<Mutex<CrawlStatus>>,
 ) -> BatchItemPipeline {
+    log::info!("[pipeline] build_banzhu_pipeline: 创建 BatchItemPipeline (batch_size=50)");
     BatchItemPipeline::new(50, move |items| {
         let db = db.clone();
         let event_bus = event_bus.clone();
         let status = status.clone();
         async move {
+            let total = items.len();
+            log::info!("[pipeline] flush 触发: 收到 {} 条 items", total);
+
             let (books, chapters, sections) = partition_items(items);
+            log::info!(
+                "[pipeline] partition 结果: books={}, chapters={}, sections={}",
+                books.len(),
+                chapters.len(),
+                sections.len()
+            );
+
+            if books.is_empty() && chapters.is_empty() && sections.is_empty() {
+                log::warn!("[pipeline] flush 中 {} 条 items 全部未匹配任何 type，已丢弃", total);
+                return;
+            }
 
             let mut failed_website_ids: Vec<i64> = vec![];
 
             let db_guard = db.lock().await;
             if !books.is_empty() {
+                log::debug!("[pipeline] 写入 books: {} 条", books.len());
                 match db_guard.batch_upsert_books(&books) {
                     Ok(n) => {
+                        log::info!("[pipeline] batch_upsert_books 成功: 写入 {} 条", n);
                         status.lock().await.books_downloaded += n as u32;
                     }
                     Err(e) => {
-                        log::error!("batch_upsert_books failed: {e}");
+                        log::error!("[pipeline] batch_upsert_books 失败: {e}");
                         status.lock().await.books_failed += books.len() as u32;
                         failed_website_ids.extend(books.iter().filter_map(|b| b.website_book_id));
                     }
                 }
             }
             if !chapters.is_empty() {
-                if let Err(e) = db_guard.batch_upsert_chapters(&chapters) {
-                    log::error!("batch_upsert_chapters failed: {e}");
-                    status.lock().await.books_failed += chapters.len() as u32;
-                    failed_website_ids.extend(chapters.iter().map(|(wid, _)| *wid));
+                log::debug!("[pipeline] 写入 chapters: {} 条", chapters.len());
+                match db_guard.batch_upsert_chapters(&chapters) {
+                    Ok(n) => log::info!("[pipeline] batch_upsert_chapters 成功: 处理 {} 条", n),
+                    Err(e) => {
+                        log::error!("[pipeline] batch_upsert_chapters 失败: {e}");
+                        status.lock().await.books_failed += chapters.len() as u32;
+                        failed_website_ids.extend(chapters.iter().map(|(wid, _)| *wid));
+                    }
                 }
             }
             if !sections.is_empty() {
-                if let Err(e) = db_guard.batch_upsert_sections(&sections) {
-                    log::error!("batch_upsert_sections failed: {e}");
-                    status.lock().await.books_failed += sections.len() as u32;
-                    failed_website_ids.extend(sections.iter().map(|(wid, _, _)| *wid));
+                log::debug!("[pipeline] 写入 sections: {} 条", sections.len());
+                match db_guard.batch_upsert_sections(&sections) {
+                    Ok(n) => log::info!("[pipeline] batch_upsert_sections 成功: 处理 {} 条", n),
+                    Err(e) => {
+                        log::error!("[pipeline] batch_upsert_sections 失败: {e}");
+                        status.lock().await.books_failed += sections.len() as u32;
+                        failed_website_ids.extend(sections.iter().map(|(wid, _, _)| *wid));
+                    }
                 }
+            }
+
+            if !failed_website_ids.is_empty() {
+                log::warn!(
+                    "[pipeline] {} 个 website_book_id 标记为失败: {:?}",
+                    failed_website_ids.len(),
+                    &failed_website_ids[..failed_website_ids.len().min(5)]
+                );
             }
 
             for wid in &failed_website_ids {
@@ -196,6 +242,11 @@ pub fn build_banzhu_pipeline(
                 books_skipped: s.books_skipped as i64,
                 message: s.message.clone(),
             });
+            log::info!(
+                "[pipeline] flush 完成: downloaded={}, failed={}",
+                s.books_downloaded,
+                s.books_failed
+            );
         }
     })
 }
