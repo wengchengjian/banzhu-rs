@@ -14,3 +14,7 @@ frontend/dist/
 docs/
 spider.toml
 .browsers/
+banzhu.db-wal
+banzhu.db-lock
+banzhu.db-shm
+banzhu.db
