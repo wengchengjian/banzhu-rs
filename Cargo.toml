@@ -46,7 +46,8 @@ ts-rs = { version = "10", features = ["chrono-impl", "no-serde-warnings"] }
 thiserror = "2"
 tokio-stream = { version = "0.1", features = ["sync"] }
 # wisp 爬虫框架（本地 path 依赖，可同步修改 wisp 源码）
-wisp = { path = "../wisp" }
+# features: http（默认）/stealth（CF bypass）/sqlite（SQLite 存储）
+wisp = { path = "../wisp", features = ["http", "stealth", "sqlite"] }
 
 [dev-dependencies]
 tokio = { version = "1", features = ["test-util", "macros", "rt-multi-thread"] }
