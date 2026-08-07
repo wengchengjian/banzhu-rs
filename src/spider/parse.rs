@@ -13,6 +13,9 @@ use lazy_static::lazy_static;
 use regex::Regex;
 use scraper::{Html, Selector};
 
+#[allow(unused_imports)]
+use log::{debug, warn};
+
 lazy_static! {
     /// 书籍详情页分页正则（迁移自 task/mod.rs::PAGE_REGEX）
     pub(crate) static ref PAGE_REGEX: Regex =
@@ -157,6 +160,10 @@ pub fn parse_book_info(book_id: usize, html: &str) -> Result<Book> {
     .parse()
     .map_err(|_| anyhow::anyhow!("book:{book_id} 喜欢数解析失败"))?;
 
+    debug!(
+        "parse_book_info: 书 {} 解析成功: 书名='{}', 分页={}, 作者='{}', 字数={}, 喜欢={}",
+        book_id, book_name, page, author, count, likes
+    );
     Ok(Book {
         num: 0,
         id: 0,
@@ -244,6 +251,7 @@ pub fn parse_chapter_list(html: &str, root_url: &str) -> Result<Vec<Chapter>> {
     if !chapters.is_empty() {
         chapters = arr_dup_rem_linked(chapters);
     }
+    debug!("parse_chapter_list: 解析出 {} 个章节", chapters.len());
     Ok(chapters)
 }
 

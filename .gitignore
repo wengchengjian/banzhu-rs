@@ -14,7 +14,11 @@ frontend/dist/
 docs/
 spider.toml
 .browsers/
+wisp-data/
+.codebuddy/
+
+# banzhu.db 及其附属文件（运行时数据库产物）
+banzhu.db
+banzhu.db-shm
 banzhu.db-wal
 banzhu.db-lock
-banzhu.db-shm
-banzhu.db

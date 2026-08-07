@@ -162,6 +162,8 @@ pub fn build_banzhu_pipeline(
         let event_bus = event_bus.clone();
         let status = status.clone();
         async move {
+            // wisp 新 API：flush 闭包收到 Vec<Item<Value>>，先取出 payload 再按 type 分流
+            let items: Vec<Value> = items.into_iter().map(|i| i.into_value()).collect();
             let total = items.len();
             log::info!("[pipeline] flush 触发: 收到 {} 条 items", total);
 
@@ -175,7 +177,7 @@ pub fn build_banzhu_pipeline(
 
             if books.is_empty() && chapters.is_empty() && sections.is_empty() {
                 log::warn!("[pipeline] flush 中 {} 条 items 全部未匹配任何 type，已丢弃", total);
-                return;
+                return Ok(());
             }
 
             let mut failed_website_ids: Vec<i64> = vec![];
@@ -247,6 +249,7 @@ pub fn build_banzhu_pipeline(
                 s.books_downloaded,
                 s.books_failed
             );
+            Ok(())
         }
     })
 }

@@ -102,6 +102,10 @@ export const crawlApi = {
   manual: (url: string) =>
     client.post<CrawlManualResult>('/api/crawl/manual', { url }),
 
+  /** POST /api/crawl/full — 手动触发全量爬取（爬完所有列表页） */
+  full: () =>
+    client.post<{ message: string }>('/api/crawl/full', {}),
+
   /** POST /api/crawl/retry-failed — 批量重试所有 failed 状态任务 */
   retryFailed: () =>
     client.post<CrawlAffectedResult>('/api/crawl/retry-failed'),

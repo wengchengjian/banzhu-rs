@@ -18,6 +18,7 @@ use std::sync::Arc;
 use tokio::sync::Mutex;
 
 #[tokio::test]
+#[ignore = "e2e 耗时较长：手动运行 cargo test --test wisp_engine_integration -- --ignored"]
 async fn test_wisp_engine_end_to_end_with_mock_server() {
     // 1. 启动 mock server
     let app = common::mock_server::make_mock_app();
@@ -38,23 +39,40 @@ async fn test_wisp_engine_end_to_end_with_mock_server() {
     let font_dict = Arc::new(spider::init_font_fanpa_dict());
     let config = Arc::new(config::Config::builder().build().unwrap());
     let spider = spider::build_spider(
-        root_url,
+        root_url.clone(),
         1,
         db.clone(),
         config,
-        event_bus,
-        status,
+        event_bus.clone(),
+        status.clone(),
         img_dict,
         font_dict,
     );
 
     // 4. 运行 engine（Http 模式避免触发浏览器）
+    // wisp 新 API：UA/Headers 中间件与写 DB 管道挂到 EngineBuilder 上
+    let headers = vec![
+        ("Accept".into(), "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8".into()),
+        ("Accept-Language".into(), "zh-CN,zh;q=0.9,en;q=0.8".into()),
+        ("Referer".into(), root_url),
+        ("Connection".into(), "keep-alive".into()),
+        ("Upgrade-Insecure-Requests".into(), "1".into()),
+    ];
     let engine = wisp::crawl::Engine::infra()
         .max_concurrent(2)
         .max_pages(10)
         .download_delay(std::time::Duration::from_millis(10))
         .obey_robots(false)
         .fetch_mode(wisp::fetcher::FetchMode::Http)
+        .ua_rotation(wisp::crawl::middleware::UaRotationMiddleware::desktop())
+        .middleware(Arc::new(wisp::crawl::middleware::HeadersMiddleware::new(headers)))
+        .pipeline(Arc::new(
+            banzhu_spider::spider::pipeline::build_banzhu_pipeline(
+                db.clone(),
+                event_bus,
+                status,
+            ),
+        ))
         .build()
         .unwrap();
 

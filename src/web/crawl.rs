@@ -112,13 +112,14 @@ pub(crate) async fn crawl_trigger(
 ) -> AppResult<Json<ApiResponse<Value>>> {
     let scheduler = state.scheduler.clone();
 
+    // 并发保护：若已有爬取在运行则拒绝；running 由 crawl_once 内部统一设置，
+    // 这里不预先置位，避免触发 crawl_once 的防重入导致手动触发被跳过。
     {
-        let mut status = scheduler.status.lock().await;
+        let status = scheduler.status.lock().await;
         if status.running {
+            log::warn!("crawl_trigger: 已有爬取任务在运行，拒绝手动触发");
             return Err(AppError::BadRequest("爬虫正在运行中".into()));
         }
-        // 在持锁期间设置 running，防止并发请求同时通过检查
-        status.running = true;
     }
 
     // spawn_blocking 因为 scraper::Html 不是 Send
@@ -130,7 +131,44 @@ pub(crate) async fn crawl_trigger(
         }
     });
 
+    log::info!("crawl_trigger: 手动爬取任务已触发");
     Ok(ok_response(json!({ "message": "爬取任务已触发" })))
+}
+
+/// POST /api/crawl/full — 手动触发一次全量爬取（爬完所有列表页）
+///
+/// 与定时增量爬取共用 `status.running` 互斥：全量爬取进行中定时任务触发会自动跳过，
+/// 反之亦然。已在运行时拒绝重复触发。
+pub(crate) async fn crawl_full(
+    State(state): State<Arc<AppState>>,
+) -> AppResult<Json<ApiResponse<Value>>> {
+    let scheduler = state.scheduler.clone();
+
+    // 配置开关：关闭时拒绝
+    let enabled = state.config.get_bool("crawl.full_enabled").unwrap_or(true);
+    if !enabled {
+        return Err(AppError::BadRequest("全量爬取未启用（crawl.full_enabled=false）".into()));
+    }
+
+    // 并发保护：若已有爬取（增量或全量）在运行则拒绝
+    {
+        let status = scheduler.status.lock().await;
+        if status.running {
+            log::warn!("crawl_full: 已有爬取任务在运行，拒绝全量触发");
+            return Err(AppError::BadRequest("爬虫正在运行中".into()));
+        }
+    }
+
+    std::thread::spawn(move || {
+        let rt = tokio::runtime::Runtime::new()
+            .expect("Failed to create tokio runtime for full crawl");
+        if let Err(e) = rt.block_on(scheduler.crawl_full()) {
+            log::error!("Full crawl failed: {}", e);
+        }
+    });
+
+    log::info!("crawl_full: 全量爬取任务已触发");
+    Ok(ok_response(json!({ "message": "全量爬取任务已触发" })))
 }
 
 pub(crate) async fn crawl_status(State(state): State<Arc<AppState>>) -> AppResult<Json<ApiResponse<Value>>> {

@@ -17,6 +17,7 @@ use serde_json::{json, Value};
 use std::sync::Arc;
 use std::time::Instant;
 use tokio::sync::Mutex;
+use tokio_cron_scheduler::{Job, JobScheduler};
 
 mod books;
 mod crawl;
@@ -27,8 +28,8 @@ mod stats;
 
 use books::{book_chapters, book_detail, categories, chapter_content, delete_book, list_books, stats as books_stats};
 use crawl::{
-    crawl_logs, crawl_manual, crawl_schedule, crawl_status, crawl_stream, crawl_tasks,
-    crawl_trigger, delete_tasks, retry_failed, update_crawl_schedule,
+    crawl_full, crawl_logs, crawl_manual, crawl_schedule, crawl_status, crawl_stream,
+    crawl_tasks, crawl_trigger, delete_tasks, retry_failed, update_crawl_schedule,
 };
 use export::export_book;
 use search::search;
@@ -95,6 +96,7 @@ pub struct AppState {
     pub db: Arc<Mutex<Database>>,
     pub scheduler: Arc<Scheduler>,
     pub event_bus: crate::event::EventBus,
+    pub config: Arc<config::Config>,
 }
 
 // ─── Query params ────────────────────────────────────────────────────────────
@@ -177,6 +179,7 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         .route("/api/export/{bookId}", get(export_book))
         // 爬虫控制
         .route("/api/crawl/trigger", post(crawl_trigger))
+        .route("/api/crawl/full", post(crawl_full))
         .route("/api/crawl/status", get(crawl_status))
         .route("/api/crawl/schedule", get(crawl_schedule).put(update_crawl_schedule))
         .route("/api/crawl/manual", post(crawl_manual))
@@ -198,7 +201,24 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         .with_state(state)
 }
 
-pub async fn run_web() -> anyhow::Result<()> {
+/// 启动时的初始爬取模式。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum InitialCrawl {
+    /// 启动后执行一次增量爬取（命令行 `--crawl`）。
+    Incremental,
+    /// 启动后执行一次全量爬取（命令行 `--full`）。
+    Full,
+    /// 启动后不执行初始爬取（默认），等待手动/定时触发。
+    None,
+}
+
+impl Default for InitialCrawl {
+    fn default() -> Self {
+        Self::None
+    }
+}
+
+pub async fn run_web(initial: InitialCrawl) -> anyhow::Result<()> {
     let db = Arc::new(Mutex::new(appconfig::open_db()?));
     log::info!("数据库已连接: {}", appconfig::get_db_path().unwrap_or_default());
 
@@ -228,15 +248,75 @@ pub async fn run_web() -> anyhow::Result<()> {
         db: db.clone(),
         scheduler: scheduler.clone(),
         event_bus,
+        config: config.clone(),
     });
 
-    // 启动时跑一次增量爬取（在主 runtime 上跑，关闭时自动取消）
+    // 启动时按模式执行初始爬取（在主 runtime 上跑，关闭时自动取消）
     let scheduler_clone = scheduler.clone();
     let crawl_task = tokio::spawn(async move {
-        if let Err(e) = scheduler_clone.crawl_once().await {
-            log::error!("Initial crawl failed: {}", e);
+        match initial {
+            InitialCrawl::Incremental => {
+                if let Err(e) = scheduler_clone.crawl_once().await {
+                    log::error!("Initial crawl (incremental) failed: {}", e);
+                }
+            }
+            InitialCrawl::Full => {
+                if let Err(e) = scheduler_clone.crawl_full().await {
+                    log::error!("Initial crawl (full) failed: {}", e);
+                }
+            }
+            InitialCrawl::None => {
+                log::info!("--no-crawl：跳过初始爬取");
+            }
         }
     });
+
+    // 按 cron.schedule 定时重复爬取（crawl_once 内部会遵守 cron.enabled 且带防重入）。
+    // 注意：tokio-cron-scheduler 0.13 要求 cron 表达式带"秒"字段（6 段：秒 分 时 日 月 周），
+    // 例如 "0 0 */6 * * *" = 每 6 小时的 0 分 0 秒。5 段标准 cron 会导致 ParseSchedule 错误。
+    let default_schedule = "0 0 */6 * * *".to_string();
+    let cron_schedule = config
+        .get_string("cron.schedule")
+        .unwrap_or_else(|_| default_schedule.clone());
+    // 若配置的表达式不合法，回退到默认每 6 小时并告警，避免启动失败
+    let crawler = scheduler.clone();
+    let cron_schedule = match Job::new_async(&cron_schedule, move |_uuid, _lock| {
+        let crawler = crawler.clone();
+        Box::pin(async move {
+            log::info!("[cron] 触发定时爬取");
+            if let Err(e) = crawler.crawl_once().await {
+                log::error!("[cron] 定时爬取失败: {}", e);
+            }
+        })
+    }) {
+        Ok(job) => {
+            let cron_scheduler = JobScheduler::new().await?;
+            cron_scheduler.add(job).await?;
+            cron_scheduler.start().await?;
+            cron_schedule
+        }
+        Err(e) => {
+            log::warn!(
+                "cron 表达式 '{}' 解析失败 ({e:?})，已回退到默认 '{default_schedule}'",
+                cron_schedule,
+            );
+            let crawler = scheduler.clone();
+            let job = Job::new_async(&default_schedule, move |_uuid, _lock| {
+                let crawler = crawler.clone();
+                Box::pin(async move {
+                    log::info!("[cron] 触发定时爬取");
+                    if let Err(e) = crawler.crawl_once().await {
+                        log::error!("[cron] 定时爬取失败: {}", e);
+                    }
+                })
+            })?;
+            let cron_scheduler = JobScheduler::new().await?;
+            cron_scheduler.add(job).await?;
+            cron_scheduler.start().await?;
+            default_schedule
+        }
+    };
+    log::info!("定时爬取已启动: schedule={}", cron_schedule);
 
     let app = build_router(state);
 

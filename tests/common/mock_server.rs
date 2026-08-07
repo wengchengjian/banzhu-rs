@@ -17,7 +17,9 @@ pub fn make_mock_app() -> Router {
         .route("/shuku/0-lastupdate-0-4.html", get(|| async { Html(LIST_PAGE_EMPTY) }))
         .route("/12/12345/", get(|| async { Html(BOOK_DETAIL) }))
         .route("/12/12345_1/", get(|| async { Html(CHAPTER_PAGE) }))
-        .route("/12/12345_1/23456.html", get(|| async { Html(SECTION_PAGE) }))
+        .route("/12/12345_1/23456.html", get(|| async { Html(SECTION_PAGE_MULTI) }))
+        .route("/12/12345_1/23456_1.html", get(|| async { Html(SECTION_PAGE) }))
+        .route("/12/12345_1/23456_2.html", get(|| async { Html(SECTION_PAGE_2) }))
 }
 
 /// 非空列表页：含一本 book（book_num=12, book_id=12345）。
@@ -53,4 +55,19 @@ const CHAPTER_PAGE: &str = r#"<!DOCTYPE html><html><body>
 /// 章节正文页：策略 1（`.page-content p`），不触发 `needs_section_post`。
 const SECTION_PAGE: &str = r#"<!DOCTYPE html><html><body>
 <div class="page-content"><p>正文内容</p></div>
+</body></html>"#;
+
+/// 多页章节首页（`23456.html`）：`.chapterPages` 含 2 个分页链接，
+/// 触发 section_handler 检测多页并 follow `23456_2.html`。
+const SECTION_PAGE_MULTI: &str = r#"<!DOCTYPE html><html><body>
+<div class="page-content"><p>第 1 页正文</p></div>
+<center class="chapterPages">
+<a href="23456_1.html" class="curr">【1】</a>
+<a href="23456_2.html">【2】</a>
+</center>
+</body></html>"#;
+
+/// 多页章节第 2 页（`23456_2.html`）：仅正文，无分页链接（已是最后一页）。
+const SECTION_PAGE_2: &str = r#"<!DOCTYPE html><html><body>
+<div class="page-content"><p>第 2 页正文</p></div>
 </body></html>"#;

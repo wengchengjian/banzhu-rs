@@ -1,4 +1,5 @@
 use banzhu_spider::web;
+use banzhu_spider::web::InitialCrawl;
 use banzhu_spider::Error;
 use std::fs;
 use std::io::{self, Write};
@@ -10,7 +11,26 @@ async fn main() -> Result<(), Error> {
 
     log::info!("banzhu-spider v{} 启动", env!("CARGO_PKG_VERSION"));
 
-    if let Err(e) = web::run_web().await {
+    // 命令行参数：
+    //   --full       启动时立即执行一次全量爬取
+    //   --crawl      启动时立即执行一次增量爬取
+    // 默认不执行初始爬取（仅启动 Web 服务，等待手动/定时触发）
+    let mut initial = InitialCrawl::None;
+    for arg in std::env::args().skip(1) {
+        match arg.as_str() {
+            "--full" | "--full-crawl" => initial = InitialCrawl::Full,
+            "--crawl" => initial = InitialCrawl::Incremental,
+            "--no-crawl" => initial = InitialCrawl::None,
+            other => {
+                log::warn!("未知参数: {other}（支持 --full / --no-crawl）");
+            }
+        }
+    }
+    if matches!(initial, InitialCrawl::Full) {
+        log::info!("命令行参数 --full：启动后执行全量爬取");
+    }
+
+    if let Err(e) = web::run_web(initial).await {
         log::error!("致命错误: {}", e);
         eprintln!("致命错误: {}", e);
         std::process::exit(1);
@@ -89,9 +109,10 @@ impl Write for TeeLogger {
 fn log_setting() {
     let writer = TeeLogger::new();
 
-    env_logger::Builder::new()
-        .filter_level(log::LevelFilter::Info)
-        .format(|buf, record| {
+    env_logger::Builder::from_env(
+        env_logger::Env::default().default_filter_or("info"),
+    )
+    .format(|buf, record| {
             let ts = buf.timestamp_millis();
             let level = record.level();
             let module = record.module_path().unwrap_or("?");

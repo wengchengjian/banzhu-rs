@@ -39,6 +39,22 @@ async function submitManual() {
   }
 }
 
+const fullCrawling = ref(false)
+
+/** 全量爬取：一次性爬完所有列表页（与定时增量互斥，running 时后端会拒绝） */
+async function submitFullCrawl() {
+  fullCrawling.value = true
+  try {
+    const result = await crawlApi.full()
+    toast.success(result.message)
+    await reloadStatusAndTasks()
+  } catch (e) {
+    toast.error(`全量爬取失败：${(e as Error).message}`)
+  } finally {
+    fullCrawling.value = false
+  }
+}
+
 // ─── 工具栏 ──────────────────────────────────────────────────────────────────
 const searchQuery = ref('')
 const retrying = ref(false)
@@ -237,6 +253,19 @@ onMounted(async () => {
         >
           {{ submitting ? '提交中...' : '开始爬取' }}
         </button>
+      </div>
+      <div class="mt-3 flex items-center gap-3 border-t border-gray-100 pt-3 dark:border-gray-700">
+        <button
+          type="button"
+          class="rounded bg-emerald-600 px-4 py-2 text-sm font-medium text-white transition hover:bg-emerald-700 disabled:opacity-50"
+          :disabled="fullCrawling || status?.running"
+          @click="submitFullCrawl"
+        >
+          {{ fullCrawling ? '提交中...' : '全量爬取全站' }}
+        </button>
+        <span class="text-xs text-gray-500 dark:text-gray-400">
+          一次性爬完所有列表页，与定时增量互斥（爬取中按钮禁用）
+        </span>
       </div>
     </div>
 
