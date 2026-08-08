@@ -1,5 +1,9 @@
 # ─── 目标站点 ───────────────────────────────────────────────────────────────
-root_url = "https://www.bz555555555.com"
+# 示例：https://www.example.com
+# 注意：若站点有 CF 挑战入口域名与实际内容域名之分（如 bz555555555.com
+# 通过 CF 后跳转到 bz444444444.com），root_url 必须用与 CF cookie 域一致的
+# 实际内容域名，否则用 root_url 拼接的 URL 无 cookie 会一直回退浏览器。
+root_url = "https://www.bz444444444.com"
 
 # ─── 数据存储 ───────────────────────────────────────────────────────────────
 [storage]
@@ -12,22 +16,37 @@ port = 4567
 # ─── 爬取调度 ───────────────────────────────────────────────────────────────
 [cron]
 enabled = true
-schedule = "0 */6 * * *"       # cron 表达式：每 6 小时
-pages_limit = 50               # 单次最多爬取列表页数
+# cron 表达式（tokio-cron-scheduler 要求 6 段：秒 分 时 日 月 周）。
+# "0 0 */6 * * *" = 每 6 小时的 0 分 0 秒。
+schedule = "0 0 */6 * * *"
+pages_limit = 1                # 单次最多爬取列表页数（增量）
 book_concurrency = 4           # 书籍并发下载数
+
+# ─── 全量爬取（手动触发 POST /api/crawl/full）────────────────────────────────
+# 一次性爬完所有列表页，与定时增量通过 status.running 互斥（运行时对方自动跳过）。
+[crawl]
+full_enabled = true            # 全量爬取开关（false 时 API 拒绝触发）
+full_pages_limit = 5000        # 全量爬取的最大列表页数（0=仅不生成起始列表页，不建议）
 
 # ─── wisp 引擎 ──────────────────────────────────────────────────────────────
 [wisp]
 fetch_mode = "auto"            # auto | http | stealth | dynamic
-max_pages = 5000               # 引擎级总页数上限
+# max_pages 可选：默认无上限，停止由「URL 队列空 + until 空页终止」自然决定。
+# 如需硬性封顶可取消注释并设置页数上限：
+# max_pages = 5000
 download_delay_ms = 500        # 请求间隔（毫秒）
 obey_robots = false
+# checkpoint（断点续爬，默认启用）：进度保存到 wisp-data/checkpoint/，
+# 中断后重启自动恢复未完成的队列。页数间隔固定 100；
+# checkpoint_interval_secs 为时间间隔兜底（秒），慢速爬取时即使页数没到也会保存。
+# 0 或留空 = 仅按页数保存。
+checkpoint_interval_secs = 30
 
 [wisp.proxy]
-enabled = false
+enabled = true
 # 支持 http/https/socks5 协议
 # 示例: "http://127.0.0.1:7890" 或 "socks5://127.0.0.1:1080"
-url = ""
+url = "http://127.0.0.1:7897"
 
 [wisp.stealth]
 headless = false               # false=可见浏览器（绕过 CF 检测）
