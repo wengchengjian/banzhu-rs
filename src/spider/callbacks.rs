@@ -30,6 +30,17 @@ const SECTION_PRIORITY: i32 = 100;
 /// 章节分页（`_N.html`）的优先级：比正文首页更高，确保多页内容被完整抓取。
 const SECTION_PAGE_PRIORITY: i32 = 200;
 
+/// 内容链优先级：让新书持续流入，避免「爆发→空转→爆发」锯齿。
+///
+/// 原默认 follow 优先级随深度递减（BFS），导致内容链的入口环节（详情页 -1、
+/// 章节分页 -2）反而比列表页(0) 低：正文(100/200) 跑完后队列空转，等低优先级
+/// 的章节分页出队才产生新正文 → 吞吐锯齿。统一给内容链入口设置显式高优先级：
+///   BOOK_DETAIL(50) < CHAPTER_PAGE(150) < SECTION(100) < SECTION_PAGE(200)
+/// 详情页/章节分页均高于列表页(0)，保证整条内容链持续填满并发。
+const BOOK_DETAIL_PRIORITY: i32 = 50;
+/// 章节分页（`{num}/{id}_{pg}/`）的优先级：高于正文首页，确保章节 URL 尽快产出。
+const CHAPTER_PAGE_PRIORITY: i32 = 150;
+
 /// `on_page("default")`：列表页 → 解析书籍 → follow 到 `book_detail`。
 ///
 /// 解析 `li.column-2 > a.name`，从 href 中拆出 `book_num/book_id`，
@@ -66,7 +77,7 @@ pub fn list_handler(
                 }
                 found_any = true;
                 follows_count += 1;
-                page.follow_meta(
+                page.follow_meta_with_priority(
                     &href,
                     "book_detail",
                     json!({
@@ -75,6 +86,7 @@ pub fn list_handler(
                         "title": title,
                         "author": "",
                     }),
+                    BOOK_DETAIL_PRIORITY,
                 );
             }
             if found_any {
@@ -166,7 +178,7 @@ pub fn book_detail_handler(
             // follow 章节分页 URL: {root_url}/{num}/{id}_{page}/
             for pg in start_page..=book.page {
                 let page_url = format!("{}/{}/{}_{}/", root_url, book.num, book.id, pg);
-                page.follow_meta(
+                page.follow_meta_with_priority(
                     &page_url,
                     "chapter",
                     json!({
@@ -175,6 +187,7 @@ pub fn book_detail_handler(
                         "title": book.title,
                         "author": book.author,
                     }),
+                    CHAPTER_PAGE_PRIORITY,
                 );
             }
 
@@ -294,7 +307,7 @@ pub fn section_handler(
             if section_order == 1 && !url.ends_with("_1.html") {
                 if let Ok(sections) = parse::parse_section_urls(&url, &html_str) {
                     if sections.len() > 1 {
-                        log::info!(
+                        log::debug!(
                             "section_handler: 书 {} 第 {} 章检测到 {} 个分页，follow 其余 {} 个",
                             book_id, chapter_order, sections.len(), sections.len() - 1
                         );
@@ -306,7 +319,7 @@ pub fn section_handler(
                             }
                             let mut meta = meta_base.clone();
                             meta["section_order"] = json!(page_no);
-                            log::info!(
+                            log::debug!(
                                 "section_handler: 书 {} 第 {} 章 follow 分页 {} (page {})",
                                 book_id, chapter_order, sec.url, page_no
                             );

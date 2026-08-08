@@ -71,7 +71,13 @@ pub fn build_spider(
         img_dict.len(),
         font_dict.len()
     );
-    info!("start_urls: {:?}", start_urls);
+    // 注意：只打印起始 URL 数量，不打印数组本身。全量爬取时 pages_limit 可达数千，
+    // 整数组打印会刷屏数千行。示例首个 URL 便于确认域名正确即可。
+    info!(
+        "start_urls: 共 {} 个起始列表页, 首个={}",
+        start_urls.len(),
+        start_urls.first().map(|s| s.as_str()).unwrap_or("")
+    );
 
     let tracker = stop::EmptyPageTracker::new(3);
 

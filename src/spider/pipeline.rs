@@ -1,4 +1,7 @@
-//! BanzhuDbPipeline：基于 wisp BatchItemPipeline，按 type 分流写 DB。
+//! BanzhuDbPipeline：基于 wisp `AsyncBatchItemPipeline` 的异步 DB 写入管道。
+//!
+//! 主循环 `process_item` 只做缓冲 + 推入 channel（无 DB IO）；后台单任务
+//! 消费 channel 批量写库。DB 写慢不再占用爬虫并发槽，爬取速度不降。
 
 use crate::db::{BookRecord, ChapterRecord, Database, SectionRecord};
 use crate::event::{CrawlEvent, EventBus};
@@ -6,7 +9,7 @@ use crate::scheduler::CrawlStatus;
 use serde_json::Value;
 use std::sync::Arc;
 use tokio::sync::Mutex;
-use wisp::crawl::middleware::BatchItemPipeline;
+use wisp::crawl::middleware::AsyncBatchItemPipeline;
 
 /// 按 item["type"] 分流到 (books, chapters, sections)。
 ///
@@ -25,39 +28,47 @@ pub fn partition_items(
     let mut books = vec![];
     let mut chapters = vec![];
     let mut sections = vec![];
-    let mut unmatched = 0u32;
-
+    let mut unmatched = 0usize;
     for item in items {
-        match item.get("type").and_then(|v| v.as_str()) {
-            Some("book") => {
-                let book = BookRecord {
+        let Some(typ) = item.get("type").and_then(|t| t.as_str()) else {
+            unmatched += 1;
+            continue;
+        };
+        match typ {
+            "book" => {
+                let b = BookRecord {
                     id: 0,
-                    website_book_id: item.get("website_book_id").and_then(|v| v.as_i64()),
-                    path_num: item.get("path_num").and_then(|v| v.as_i64()).unwrap_or(0),
+                    website_book_id: item
+                        .get("website_book_id")
+                        .and_then(|v| v.as_i64()),
+                    path_num: item
+                        .get("path_num")
+                        .and_then(|v| v.as_i64())
+                        .unwrap_or(0),
                     title: item
                         .get("title")
                         .and_then(|v| v.as_str())
-                        .unwrap_or("")
+                        .unwrap_or_default()
                         .to_string(),
                     filename: item
                         .get("filename")
                         .and_then(|v| v.as_str())
-                        .unwrap_or("")
+                        .unwrap_or_default()
                         .to_string(),
                     author: item
                         .get("author")
                         .and_then(|v| v.as_str())
-                        .unwrap_or("")
+                        .unwrap_or_default()
                         .to_string(),
                     category: item
                         .get("category")
                         .and_then(|v| v.as_str())
-                        .unwrap_or("")
+                        .unwrap_or_default()
                         .to_string(),
                     introduce: item
                         .get("introduce")
                         .and_then(|v| v.as_str())
-                        .unwrap_or("")
+                        .unwrap_or_default()
                         .to_string(),
                     likes: item.get("likes").and_then(|v| v.as_i64()).unwrap_or(0),
                     word_count: item
@@ -71,25 +82,21 @@ pub fn partition_items(
                     created_at: 0,
                     updated_at: 0,
                 };
-                books.push(book);
+                books.push(b);
             }
-            Some("chapter") => {
-                let website_book_id = item
-                    .get("website_book_id")
-                    .and_then(|v| v.as_i64())
-                    .unwrap_or(0);
-                let chapter = ChapterRecord {
+            "chapter" => {
+                let c = ChapterRecord {
                     id: 0,
                     book_id: 0,
                     title: item
                         .get("title")
                         .and_then(|v| v.as_str())
-                        .unwrap_or("")
+                        .unwrap_or_default()
                         .to_string(),
                     url: item
                         .get("url")
                         .and_then(|v| v.as_str())
-                        .unwrap_or("")
+                        .unwrap_or_default()
                         .to_string(),
                     chapter_order: item
                         .get("chapter_order")
@@ -97,48 +104,43 @@ pub fn partition_items(
                         .unwrap_or(0),
                     word_count: 0,
                 };
-                chapters.push((website_book_id, chapter));
-            }
-            Some("section") => {
-                let website_book_id = item
+                let wid = item
                     .get("website_book_id")
                     .and_then(|v| v.as_i64())
                     .unwrap_or(0);
-                let chapter_order = item
-                    .get("chapter_order")
-                    .and_then(|v| v.as_i64())
-                    .unwrap_or(0);
-                let section = SectionRecord {
+                chapters.push((wid, c));
+            }
+            "section" => {
+                let s = SectionRecord {
                     id: 0,
                     chapter_id: 0,
                     book_id: 0,
                     url: item
                         .get("url")
                         .and_then(|v| v.as_str())
-                        .unwrap_or("")
+                        .unwrap_or_default()
                         .to_string(),
                     content: item
                         .get("content")
                         .and_then(|v| v.as_str())
-                        .unwrap_or("")
+                        .unwrap_or_default()
                         .to_string(),
                     section_order: item
                         .get("section_order")
                         .and_then(|v| v.as_i64())
                         .unwrap_or(0),
                 };
-                sections.push((website_book_id, chapter_order, section));
+                let wid = item
+                    .get("website_book_id")
+                    .and_then(|v| v.as_i64())
+                    .unwrap_or(0);
+                let cid = item
+                    .get("chapter_id")
+                    .and_then(|v| v.as_i64())
+                    .unwrap_or(0);
+                sections.push((wid, cid, s));
             }
-            _ => {
-                unmatched += 1;
-                if unmatched <= 3 {
-                    log::warn!(
-                        "[pipeline] partition: 未识别的 item type={:?}, keys={:?}",
-                        item.get("type"),
-                        item.as_object().map(|o| o.keys().collect::<Vec<_>>())
-                    );
-                }
-            }
+            _ => unmatched += 1,
         }
     }
     if unmatched > 0 {
@@ -147,17 +149,16 @@ pub fn partition_items(
     (books, chapters, sections)
 }
 
-/// 构造写 DB 的 BatchItemPipeline（batch=50）。
+/// 构造异步 DB 写入 pipeline（batch=50）。
 ///
-/// 闭包捕获 `Arc<Mutex<Database>>` / `EventBus` / `Arc<Mutex<CrawlStatus>>`，
-/// 满足 `Send + Sync + 'static` 约束；每次 flush 内部 clone 这三份 handle。
+/// flush 闭包在 wisp 后台任务中执行，主循环只缓冲 + 推 channel，DB 写不阻塞爬取。
 pub fn build_banzhu_pipeline(
     db: Arc<Mutex<Database>>,
     event_bus: EventBus,
     status: Arc<Mutex<CrawlStatus>>,
-) -> BatchItemPipeline {
-    log::info!("[pipeline] build_banzhu_pipeline: 创建 BatchItemPipeline (batch_size=50)");
-    BatchItemPipeline::new(50, move |items| {
+) -> AsyncBatchItemPipeline {
+    log::info!("[pipeline] build_banzhu_pipeline: 创建 AsyncBatchItemPipeline (batch_size=50)");
+    AsyncBatchItemPipeline::new(50, move |items| {
         let db = db.clone();
         let event_bus = event_bus.clone();
         let status = status.clone();

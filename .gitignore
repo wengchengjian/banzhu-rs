@@ -16,7 +16,8 @@ spider.toml
 .browsers/
 wisp-data/
 .codebuddy/
-
+*.log.*
+run_stdout.txt
 # banzhu.db 及其附属文件（运行时数据库产物）
 banzhu.db
 banzhu.db-shm

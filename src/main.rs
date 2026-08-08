@@ -75,7 +75,9 @@ impl TeeLogger {
             .open(LOG_FILE)
             .expect("Failed to reopen log file after rotation");
         self.file_size = 0;
-        log::info!("日志已轮转 (旧日志: {}.1)", LOG_FILE);
+        // 注意：不能在此调用 log::info!。write() 在 env_logger 的 writer 锁内执行，
+        // 轮转后再次发日志会重复加锁（std Mutex 不可重入）导致死锁、进程卡死。
+        let _ = writeln!(self.file, "日志已轮转 (旧日志: {}.1)", LOG_FILE);
     }
 }
 
